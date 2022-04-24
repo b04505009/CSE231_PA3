@@ -14,30 +14,29 @@ export type TypedVar<A> = {
   a?: A, name: string, type: Type
 }
 
-// export type FuncDef<A> = {
-//   a?: A, name: string, class?: string, params: TypedVar<A>[], varinits: VarInit<A>[], ret: Type, stmts: Stmt<A>[]
-// }
-
 export type FuncDef<A> = {
   a?: A, name: string, class?: string, params: TypedVar<A>[], body: Body<A>, ret: Type
 }
 
 export type Stmt<A> =
   | { a?: A, tag: "assign", name: string, value: Expr<A> }
+  | { a?: A, tag: "memberAssign", obj: Expr<A>, name: string, value: Expr<A> }
   | { a?: A, tag: "if", cond: Expr<A>, then: Stmt<A>[], else: Stmt<A>[] }
   | { a?: A, tag: "while", cond: Expr<A>, loop: Stmt<A>[] }
   | { a?: A, tag: "pass" }
   | { a?: A, tag: "return", ret: Expr<A> }
   | { a?: A, tag: "expr", expr: Expr<A> }
-  | { a?: A, tag: "varinit"}
-  | { a?: A, tag: "funcdef"}
+  | { a?: A, tag: "varInit"}
+  | { a?: A, tag: "funcDef"}
 
 export type Expr<A> = 
   | { a?: A, tag: "literal", value: Literal<A> }
   | { a?: A, tag: "id", name: string }
+  | { a?: A, tag: "member", obj: Expr<A>, name: string }
   | { a?: A, tag: "uniexpr", op: UniOp, expr: Expr<A> }
   | { a?: A, tag: "binexpr", op: BinOp, lhs: Expr<A>, rhs: Expr<A> }
   | { a?: A, tag: "call", name: string, args: Expr<A>[] }
+  | { a?: A, tag: "memberCall", obj: Expr<A>, name: string, args: Expr<A>[] }
   | { a?: A, tag: "builtin1", name: builtin1, arg: Expr<A> }
   | { a?: A, tag: "builtin2", name: builtin2, arg1: Expr<A>, arg2: Expr<A> }
 

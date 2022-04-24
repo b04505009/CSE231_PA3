@@ -71,13 +71,13 @@ export function traverseBody(c: TreeCursor, s: string): Body<null> {
   do {
     const stmt = traverseStmt(c, s);
     var stmtStarted = false;
-    if (stmt.tag === "varinit") {
+    if (stmt.tag === "varInit") {
       if (stmtStarted) {
         // TODO: Show which body 
         throw new Error("ParseError: Variable initializer after statement in body");
       }
      body.varinits.push(traverseVarInit(c, s));
-    } else if (stmt.tag === "funcdef") {
+    } else if (stmt.tag === "funcDef") {
       if (stmtStarted) {
         // TODO: Show which body 
         throw new Error("ParseError: Function definition after statement in body");
@@ -236,7 +236,7 @@ export function traverseStmt(c: TreeCursor, s: string): Stmt<null> {
       if (typeNameCheck(c, "TypeDef")) {
         c.parent();
         // Deal in traverseVarInit
-        return { tag: "varinit" };
+        return { tag: "varInit" };
       }
       c.nextSibling(); // AssignOp
       c.nextSibling(); // Expr
@@ -284,7 +284,7 @@ export function traverseStmt(c: TreeCursor, s: string): Stmt<null> {
       return { tag: "expr", expr: expr }
     // Deal in traverseFuncDef
     case "FunctionDefinition":
-      return { tag: "funcdef" }
+      return { tag: "funcDef" }
     default:
       throw new Error("ParseError: Could not parse stmt at " + c.node.from + " " + c.node.to + ": " + c.type.name);
   }
