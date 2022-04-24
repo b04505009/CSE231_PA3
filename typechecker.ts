@@ -32,7 +32,9 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
   prog.funcdefs.forEach(funcdef => {
     typedProg.funcdefs.push(typeCheckFuncDef(funcdef, globalEnv));
   });
-
+  if (checkReturn(prog.stmts)) {
+    throw new Error("TypeError: Return Statement cannot appear at the top level");
+  }
   typedProg.stmts = typeCheckStmts(prog.stmts, globalEnv, {var: new Map(), func: new Map()});
   return typedProg;
 }
