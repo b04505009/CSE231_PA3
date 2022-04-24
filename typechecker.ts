@@ -116,6 +116,9 @@ export function typeCheckVarInits(inits: VarInit<null>[]): VarInit<Type>[] {
 }
 
 export function checkReturn(stmts: Stmt<Type>[]): boolean {
+  if (stmts.length === 0) {
+    return false;
+  }
   const lastStmt = stmts[stmts.length - 1];
   if (lastStmt.tag === "return") {
     return true
