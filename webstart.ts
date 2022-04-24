@@ -1,8 +1,4 @@
 import {run} from './runner';
-import { compile } from './compiler';
-import { parse } from './parser';
-import { typeCheckProgram } from './typechecker';
-import { Type } from './ast';
 
 function webStart() {
   document.addEventListener("DOMContentLoaded", function() {

@@ -1,5 +1,5 @@
 export type Body<A> = {
-  a?: A, varinits?: VarInit<A>[], funcdefs?: FuncDef<A>[], stmts: Stmt<A>[]
+  a?: A, varinits?: VarInit<A>[], classdefs?: ClassDef<A>[], funcdefs?: FuncDef<A>[], stmts: Stmt<A>[]
 }
 
 export type ClassDef<A> = {
@@ -76,7 +76,7 @@ export type Literal<A> =
   | { a?: A, tag: "bool", value: boolean }
   | { a?: A, tag: "none" }
 
-// None: NoneType
+// None: { tag: "object", name: "NoneType" }
 export type Type = 
   | { tag: "primitive", name: "Int" | "Bool" }
   | { tag: "object", name: string }
@@ -86,10 +86,7 @@ export function isBuiltin1(maybeBuiltin1: string): maybeBuiltin1 is builtin1 {
 }
 
 export function isEqualType(type1: Type, type2: Type): boolean {
-  if (type1.tag === "primitive" && type2.tag === "primitive") {
-    return type1.name === type2.name;
-  }
-  return type1.name === type2.name;
+  return type1.tag === type2.tag && type1.name === type2.name;
 }
 
 export function isEqualPrimitiveType(type: Type, prim: string): boolean {

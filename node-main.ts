@@ -3,7 +3,6 @@ import { run } from './runner';
 import { parse } from './parser';
 import { typeCheckProgram } from './typechecker';
 import { stringifyTree } from "./treeprinter";
-import { parser } from "lezer-python";
 
 const importObject = {
   imports: {

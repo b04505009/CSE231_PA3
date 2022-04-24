@@ -36,6 +36,10 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
     throw new Error("TypeError: Return Statement cannot appear at the top level");
   }
   typedProg.stmts = typeCheckStmts(prog.stmts, globalEnv, {var: new Map(), func: new Map()});
+  typedProg.a = { tag: "object", name: "NoneType" }
+  if (typedProg.stmts.length > 0) {
+    typedProg.a = typedProg.stmts[typedProg.stmts.length - 1].a;
+  }
   return typedProg;
 }
 
@@ -71,7 +75,7 @@ export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalE
         if (!isEqualType(typedRet.a, refEnv.ret)) {
           throw new Error(`TypeError: Cannot return value of type ${typedRet.a.name} from function with return type ${refEnv.ret.name}`);
         }
-        typedStmts.push({ ...stmt, a: typedRet.a, ret: typedRet });
+        typedStmts.push({ ...stmt, a: { tag: "object", name: "NoneType" }, ret: typedRet });
         return typedStmts;
       case "if":
         const typedCond_if = typeCheckExpr(stmt.cond, refEnv);
