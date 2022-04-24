@@ -4,6 +4,9 @@
 // - https://developer.mozilla.org/en-US/docs/WebAssembly/Using_the_JavaScript_API
 
 import wabt from 'wabt';
+import { compile } from './compiler';
+import { parse } from './parser';
+import { typeCheckProgram } from './typechecker';
 
 // NOTE(joe): This is a hack to get the CLI Repl to run. WABT registers a global
 // uncaught exn handler, and this is not allowed when running the REPL
@@ -19,10 +22,14 @@ if(typeof process !== "undefined") {
   };
 }
 
-export async function run(watSource : string, config: any) : Promise<number> {
+export async function run(chocoPyCode : string, config: any) : Promise<number> {
   const wabtApi = await wabt();
-  const parsed = wabtApi.parseWat("example", watSource);
-  const binary = parsed.toBinary({});
-  const wasmModule = await WebAssembly.instantiate(binary.buffer, config);
+  const parsedProg = parse(chocoPyCode);
+  const typedProg = typeCheckProgram(parsedProg);
+  const compiledProg = compile(typedProg);
+  const importObject = config.importObject;
+  const myModule = wabtApi.parseWat("test.wat", compiledProg.wasmSource);
+  const asBinary  = myModule.toBinary({});
+  const wasmModule = await WebAssembly.instantiate(asBinary.buffer, importObject);
   return (wasmModule.instance.exports as any)._start();
 }

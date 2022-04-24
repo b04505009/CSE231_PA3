@@ -51,20 +51,9 @@ function webStart() {
     }
 
     document.getElementById("run").addEventListener("click", function(e) {
-      var result;
-      try{
-        const source = document.getElementById("user-code") as HTMLTextAreaElement;
-        const output = document.getElementById("output").innerHTML = "";
-        const parsed_prog = parse(source.value);
-        const typed_prog = typeCheckProgram(parsed_prog);
-        result = compile(typed_prog);
-      }
-      catch(e) {
-        renderError(e);
-        console.log("run failed", e);
-      }
-      console.log(result.wasmSource);
-      run(result.wasmSource, importObject).then((r) => { renderResult(r); console.log ("run finished") })
+      const source = document.getElementById("user-code") as HTMLTextAreaElement;
+      const output = document.getElementById("output").innerHTML = "";
+      run(source.value, {importObject}).then((r) => { renderResult(r); console.log ("run finished") })
           .catch((e) => { renderError(e); console.log("run failed", e) });;
     });
   });

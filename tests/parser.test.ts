@@ -1,5 +1,5 @@
 import * as mocha from 'mocha';
-import {expect} from 'chai';
+import { expect } from 'chai';
 import { parser } from 'lezer-python';
 import { traverseExpr, traverseStmt, traverse, parse } from '../parser';
 
@@ -20,9 +20,14 @@ describe('traverseExpr(c, s) function', () => {
     const parsedExpr = traverseExpr(cursor, source);
 
     // Note: we have to use deep equality when comparing objects
-    expect(parsedExpr).to.deep.equal({tag: "num", value: 987});
+    expect(parsedExpr).to.deep.equal({
+      "tag": "literal",
+      "value": {
+        "tag": "number",
+        "value": 987
+      }
+    });
   })
-
   // TODO: add additional tests here to ensure traverseExpr works as expected
 });
 
@@ -37,8 +42,19 @@ describe('traverse(c, s) function', () => {
 describe('parse(source) function', () => {
   it('parse a number', () => {
     const parsed = parse("987");
-    expect(parsed).to.deep.equal([{tag: "expr", expr: {tag: "num", value: 987}}]);
-  });  
+    console.log(parsed);
+    expect(parsed.stmts).to.deep.equal(
+      [{
+        tag: "expr",
+        expr: {
+          tag: "literal",
+          value: {
+            "tag": "number",
+            "value": 987
+          }
+        }
+      }]);
+  });
 
   // TODO: add additional tests here to ensure parse works as expected
 });

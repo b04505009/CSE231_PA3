@@ -13,6 +13,25 @@ const importObject = {
       importObject.output += "\n";
       return arg;
     },
+    print_num: (arg : any) => {
+      importObject.output += arg;
+      importObject.output += "\n";
+      return arg;
+    },
+    print_bool: (arg : any) => {
+      importObject.output += arg === 1 ? "True" : "False";
+      importObject.output += "\n";
+      return arg;
+    },
+    print_none: (arg : any) => {
+      importObject.output += "None";
+      importObject.output += "\n";
+      return arg;
+    },
+    abs: Math.abs,
+    max: Math.max,
+    min: Math.min,
+    pow: Math.pow
   },
 
   output: ""
