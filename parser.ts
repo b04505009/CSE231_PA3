@@ -1,6 +1,6 @@
 import { parser } from "lezer-python";
 import { TreeCursor } from "lezer";
-import { TypedVar, Stmt, Expr, Type, isUniOp, isBinOp, Body, VarInit, FuncDef, isBuiltin1, isBuiltin2 } from './ast';
+import { TypedVar, Stmt, Expr, Type, isUniOp, isBinOp, Body, VarInit, FuncDef, ClassDef, isBuiltin1, isBuiltin2 } from './ast';
 
 export function traverseType(c: TreeCursor, s: string): Type {
   c.firstChild(); // ":" or VariableName
@@ -66,6 +66,7 @@ export function traverseBody(c: TreeCursor, s: string): Body<null> {
   const body: Body<null> = { 
     varinits: [],
     funcdefs: [],
+    classdefs: [],
     stmts: [],
    };
   do {
@@ -83,7 +84,14 @@ export function traverseBody(c: TreeCursor, s: string): Body<null> {
         throw new Error("ParseError: Function definition after statement in body");
       }
       body.funcdefs.push(traverseFuncDef(c, s));
-    } else {
+    } else if (stmt.tag === "classDef") {
+      if (stmtStarted) {
+        // TODO: Show which body 
+        throw new Error("ParseError: Class definition after statement in body");
+      } 
+      body.classdefs.push(traverseClassDef(c, s));
+    }
+    else {
       stmtStarted = true;
       body.stmts.push(stmt);
       // TODO: Show error if there are statements after return
@@ -285,6 +293,8 @@ export function traverseStmt(c: TreeCursor, s: string): Stmt<null> {
     // Deal in traverseFuncDef
     case "FunctionDefinition":
       return { tag: "funcDef" }
+    case "ClassDefinition":
+      return { tag: "classDef" }
     default:
       throw new Error("ParseError: Could not parse stmt at " + c.node.from + " " + c.node.to + ": " + c.type.name);
   }
@@ -339,9 +349,33 @@ export function traverseFuncDef(c: TreeCursor, s: string): FuncDef<null> {
   c.parent(); // Body
   c.parent(); // FunctionDefinition
   if (body["funcdefs"].length > 0) {
-    throw new Error("ParseError: funcdef body cannot have funcdefs");
+    throw new Error("ParseError: function body cannot have funcdefs");
   }
   return { name, params, body, ret };
+}
+
+export function traverseClassDef(c: TreeCursor, s: string): ClassDef<null> { 
+
+  c.firstChild() // "class"
+  c.nextSibling() // VariableName
+  var name = s.substring(c.from, c.to)
+  c.nextSibling() // ArgList
+  var args = traverseArgs(c, s)
+  if (args.length !== 1){
+    throw new Error("ParseError: class can and must have one super class")
+  }
+  if (args[0].tag !== "id"){
+    throw new Error("ParseError: invalid super class for class " + name)
+  }
+  c.nextSibling() // Body
+  var body = traverseBody(c, s)
+  if (body.classdefs.length !== 0){
+    throw new Error("ParseError: class body cannot have classdefs");
+  }
+  if (body.stmts.length !== 0){
+    throw new Error("ParseError: class body cannot have stmts");
+  }
+  return {name, super: args[0].name, body}
 }
 
 export function traverse(c: TreeCursor, s: string): Body<null> {

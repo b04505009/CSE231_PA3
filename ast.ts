@@ -28,6 +28,7 @@ export type Stmt<A> =
   | { a?: A, tag: "expr", expr: Expr<A> }
   | { a?: A, tag: "varInit"}
   | { a?: A, tag: "funcDef"}
+  | { a?: A, tag: "classDef"}
 
 export type Expr<A> = 
   | { a?: A, tag: "literal", value: Literal<A> }
