@@ -1,4 +1,4 @@
-import { Body, Type, Expr, Stmt, Literal, BinOp, UniOp, VarInit, FuncDef, TypedVar, isBuiltin1 } from "./ast";
+import { Body, Type, Expr, Stmt, Literal, BinOp, UniOp, VarInit, FuncDef, TypedVar } from "./ast";
 
 // https://learnxinyminutes.com/docs/wasm/
 
@@ -8,11 +8,11 @@ type CompileResult = {
   wasmSource: string,
 };
 
-export function compile(prog: Body<Type>) : CompileResult {
+export function compile(prog: Body<Type>): CompileResult {
 
   // console.log("compile: ", prog);
 
-  const emptyEnv : LocalEnv = new Map();
+  const emptyEnv: LocalEnv = new Map();
 
   const varsCode = prog.varinits.map(v => `(global $${v.name} (mut i32) ${codeGenLiteral(v.init)})`).join("\n");
   const funcsCode = prog.funcdefs.map(f => codeGenFunc(f, emptyEnv)).map(s => s.join("\n")).join("\n\n");
@@ -25,13 +25,14 @@ export function compile(prog: Body<Type>) : CompileResult {
   // TODO: Maybe check in typechecker?
   var retType = "";
   var retVal = "";
-  if (prog.stmts.length > 0 && prog.stmts[prog.stmts.length-1].tag === "expr") {
+  if (prog.stmts.length > 0 && prog.stmts[prog.stmts.length - 1].tag === "expr") {
     // return the last expression
     retType = "(result i32)";
     retVal = "(local.get $scratch)"
   }
 
-  return {wasmSource :`
+  return {
+    wasmSource: `
     (module
       (func $print_num (import "imports" "print_num") (param i32) (result i32))
       (func $print_bool (import "imports" "print_bool") (param i32) (result i32))
@@ -50,7 +51,7 @@ export function compile(prog: Body<Type>) : CompileResult {
   `};
 }
 
-export function codeGenFunc(func : FuncDef<any>, localEnv_: LocalEnv) : Array<string> {
+export function codeGenFunc(func: FuncDef<any>, localEnv_: LocalEnv): Array<string> {
   const localEnv = new Map(localEnv_);
   var params = "";
   if (func.params.length > 0) {
@@ -67,18 +68,22 @@ export function codeGenFunc(func : FuncDef<any>, localEnv_: LocalEnv) : Array<st
        ${body}
        (i32.const 0)
      )`];
-} 
+}
 
-export function codeGenStmt(stmt : Stmt<Type>, localEnv : LocalEnv) : Array<string> {
-  switch(stmt.tag) {
+export function codeGenStmt(stmt: Stmt<Type>, localEnv: LocalEnv): Array<string> {
+  switch (stmt.tag) {
     case "assign":
-      var valExpr = codeGenExpr(stmt.value, localEnv);
-      if (localEnv.get(stmt.name)) {
-        return valExpr.concat([`(local.set $${stmt.name})`]);
+      // Just for TS compilation. Should never happen.
+      if (stmt.target.tag !== "id") {
+        throw new Error("codeGenStmt: assign: target is not an id");
       }
-      return valExpr.concat([`(global.set $${stmt.name})`]);
+      var valExpr = codeGenExpr(stmt.value, localEnv);
+      if (localEnv.get(stmt.target.name)) {
+        return valExpr.concat([`(local.set $${stmt.target.name})`]);
+      }
+      return valExpr.concat([`(global.set $${stmt.target.name})`]);
     case "if":
-      const condExpr_if = codeGenExpr(stmt.cond, localEnv); 
+      const condExpr_if = codeGenExpr(stmt.cond, localEnv);
       const thenStmts = stmt.then.map(s => codeGenStmt(s, localEnv)).flat();
       const elseStmts = stmt.else.map(s => codeGenStmt(s, localEnv)).flat();
       return [
@@ -97,8 +102,8 @@ export function codeGenStmt(stmt : Stmt<Type>, localEnv : LocalEnv) : Array<stri
       const loopStmts = stmt.loop.map(s => codeGenStmt(s, localEnv)).flat();
       return [
         "(block",
-        "(loop", 
-        ...condExpr_while, 
+        "(loop",
+        ...condExpr_while,
         "(i32.eqz)",
         "(br_if 1)",
         ...loopStmts,
@@ -120,8 +125,8 @@ export function codeGenStmt(stmt : Stmt<Type>, localEnv : LocalEnv) : Array<stri
 }
 
 
-function codeGenExpr(expr : Expr<Type>, localEnv: LocalEnv) : Array<string> {
-  switch(expr.tag) {
+function codeGenExpr(expr: Expr<Type>, localEnv: LocalEnv): Array<string> {
+  switch (expr.tag) {
     case "literal":
       return [codeGenLiteral(expr.value)];
     case "id":
@@ -133,56 +138,69 @@ function codeGenExpr(expr : Expr<Type>, localEnv: LocalEnv) : Array<string> {
       return ["(i32.const 0)", ...codeGenExpr(expr.expr, localEnv), codeGenUniOp(expr.op)];
     case "binexpr":
       const leftStmts = codeGenExpr(expr.lhs, localEnv);
-      const rightStmts = codeGenExpr(expr.rhs,localEnv);
+      const rightStmts = codeGenExpr(expr.rhs, localEnv);
       const opStmts = codeGenBinOp(expr.op);
       return [...leftStmts, ...rightStmts, opStmts];
     case "call":
-      const args = expr.args.map(a => codeGenExpr(a, localEnv)).flat();
-      return [...args, `(call $${expr.name})`];
-    case "builtin1":
-      const argStmts = codeGenExpr(expr.arg, localEnv);
-      switch(expr.name) {
-        case "print":
-          if (expr.arg.a.tag == "primitive") {
-            switch (expr.arg.a.name) {
-              case "Int":
-                return [...argStmts, "(call $print_num)"];
-              case "Bool":
-                return [...argStmts, "(call $print_bool)"];
-            }
-          } else {
-            switch (expr.arg.a.name) {
-              case "NoneType":
-                return [...argStmts, "(call $print_none)"];
-              default:
-                throw new Error("Unsupported type for print" + expr.arg.a.name);
-          }
-          }
-        case "abs":
-          return [...argStmts, `(call $abs)`];
-        default:
-          throw new Error("Unsupported builtin1: " + expr.name);
-        }
-    case "builtin2":
-      const arg1Stmts = codeGenExpr(expr.arg1, localEnv);
-      const arg2Stmts = codeGenExpr(expr.arg2, localEnv);
-      switch(expr.name) {
-        case "min":
-          return [...arg1Stmts, ...arg2Stmts, `(call $min)`];
-        case "max":
-          return [...arg1Stmts, ...arg2Stmts, `(call $max)`];
-        case "pow":
-          return [...arg1Stmts, ...arg2Stmts, `(call $pow)`];
-        default:
-          throw new Error("Unsupported builtin2: " + expr.name);
+      // Just for TS compilation. Should never happen.
+      if (expr.func.tag !== "id") {
+        throw new Error("codeGenExpr: call: func is not an id");
       }
+      const args = expr.args.map(a => codeGenExpr(a, localEnv)).flat();
+      switch (expr.func.name) {
+        case "$$print$$int":
+          return [...args, "(call $print_num)"];
+        case "$$print$$bool":
+          return [...args, "(call $print_bool)"];
+        case "$$print$$None":
+          return [...args, "(call $print_none)"];
+        default:
+          return [...args, `(call $${expr.func.name})`];
+      }
+    // case "builtin1":
+    //   const argStmts = codeGenExpr(expr.arg, localEnv);
+    //   switch (expr.name) {
+    //     case "print":
+    //       if (expr.arg.a.tag == "primitive") {
+    //         switch (expr.arg.a.name) {
+    //           case "Int":
+    //             return [...argStmts, "(call $print_num)"];
+    //           case "Bool":
+    //             return [...argStmts, "(call $print_bool)"];
+    //         }
+    //       } else {
+    //         switch (expr.arg.a.name) {
+    //           case "NoneType":
+    //             return [...argStmts, "(call $print_none)"];
+    //           default:
+    //             throw new Error("Unsupported type for print" + expr.arg.a.name);
+    //         }
+    //       }
+    //     case "abs":
+    //       return [...argStmts, `(call $abs)`];
+    //     default:
+    //       throw new Error("Unsupported builtin1: " + expr.name);
+    //   }
+    // case "builtin2":
+    //   const arg1Stmts = codeGenExpr(expr.arg1, localEnv);
+    //   const arg2Stmts = codeGenExpr(expr.arg2, localEnv);
+    //   switch (expr.name) {
+    //     case "min":
+    //       return [...arg1Stmts, ...arg2Stmts, `(call $min)`];
+    //     case "max":
+    //       return [...arg1Stmts, ...arg2Stmts, `(call $max)`];
+    //     case "pow":
+    //       return [...arg1Stmts, ...arg2Stmts, `(call $pow)`];
+    //     default:
+    //       throw new Error("Unsupported builtin2: " + expr.name);
+    //   }
     default:
-      // throw new Error("Unsupported expr: " + expr.tag);
+    // throw new Error("Unsupported expr: " + expr.tag);
   }
 }
 
-function codeGenLiteral(lit : Literal<Type>) : string {
-  switch(lit.tag) {
+function codeGenLiteral(lit: Literal<Type>): string {
+  switch (lit.tag) {
     case "number":
       return "(i32.const " + lit.value + ")";
     case "bool":
@@ -192,8 +210,8 @@ function codeGenLiteral(lit : Literal<Type>) : string {
   }
 }
 
-function codeGenUniOp(op : UniOp) : string {
-  switch(op) {
+function codeGenUniOp(op: UniOp): string {
+  switch (op) {
     case UniOp.Neg:
       return "(i32.sub)";
     case UniOp.Not:
@@ -201,8 +219,8 @@ function codeGenUniOp(op : UniOp) : string {
   }
 }
 
-function codeGenBinOp(op : BinOp) : string {
-  switch(op) {
+function codeGenBinOp(op: BinOp): string {
+  switch (op) {
     case BinOp.Add:
       return "(i32.add)";
     case BinOp.Sub:

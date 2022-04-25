@@ -1,6 +1,6 @@
 import { parser } from "lezer-python";
 import { TreeCursor } from "lezer";
-import { TypedVar, Stmt, Expr, Type, isUniOp, isBinOp, Body, VarInit, FuncDef, ClassDef, isBuiltin1, isBuiltin2 } from './ast';
+import { TypedVar, Stmt, Expr, Type, isUniOp, isBinOp, Body, VarInit, FuncDef, ClassDef, NoneType } from './ast';
 
 export function traverseType(c: TreeCursor, s: string): Type {
   c.firstChild(); // ":" or VariableName
@@ -11,16 +11,16 @@ export function traverseType(c: TreeCursor, s: string): Type {
     case "VariableName":
       const typeString = s.substring(c.from, c.to);
       c.parent();
-      if(typeString == "int") {
-        return { tag: "primitive", name: "Int" };
-      } else if(typeString == "bool") {
-        return { tag: "primitive", name: "Bool" };
+      if (typeString == "int") {
+        return { tag: "primitive", name: "int" };
+      } else if (typeString == "bool") {
+        return { tag: "primitive", name: "bool" };
       } else {
         return { tag: "object", name: typeString };
       }
     case "None":
       c.parent();
-      return { tag: "object", name: "NoneType" };
+      return { tag: "object", name: "None" };
     default:
       throw new Error("ParseError: Unknown type " + c.type.name)
   }
@@ -30,7 +30,7 @@ export function traverseArgs(c: TreeCursor, s: string): Expr<null>[] {
   c.firstChild(); // "("
   var args = Array<Expr<any>>();
   c.nextSibling(); // expr or ")"
-  while (c.name != ")"){
+  while (c.name != ")") {
     args.push(traverseExpr(c, s));
     c.nextSibling(); // "," or ")"
     c.nextSibling(); // expr or ")"
@@ -62,13 +62,15 @@ export function traverseParams(c: TreeCursor, s: string): TypedVar<null>[] {
   return params;
 }
 
+// The caller is expected to visit the first statement node inside the Body
+// and the caller should call parent to pop out this level by itself
 export function traverseBody(c: TreeCursor, s: string): Body<null> {
-  const body: Body<null> = { 
+  const body: Body<null> = {
     varinits: [],
     funcdefs: [],
     classdefs: [],
     stmts: [],
-   };
+  };
   do {
     const stmt = traverseStmt(c, s);
     var stmtStarted = false;
@@ -77,7 +79,7 @@ export function traverseBody(c: TreeCursor, s: string): Body<null> {
         // TODO: Show which body 
         throw new Error("ParseError: Variable initializer after statement in body");
       }
-     body.varinits.push(traverseVarInit(c, s));
+      body.varinits.push(traverseVarInit(c, s));
     } else if (stmt.tag === "funcDef") {
       if (stmtStarted) {
         // TODO: Show which body 
@@ -88,7 +90,7 @@ export function traverseBody(c: TreeCursor, s: string): Body<null> {
       if (stmtStarted) {
         // TODO: Show which body 
         throw new Error("ParseError: Class definition after statement in body");
-      } 
+      }
       body.classdefs.push(traverseClassDef(c, s));
     }
     else {
@@ -168,35 +170,44 @@ export function traverseExpr(c: TreeCursor, s: string): Expr<null> {
       c.parent();
       return expr;
     case "CallExpression":
-      c.firstChild(); // VariableName
-      var name = s.substring(c.from, c.to);
+      c.firstChild(); // Expr
+      var func = traverseExpr(c, s);
       c.nextSibling(); // ArgList
       var args = traverseArgs(c, s);
       c.parent();
-      if (isBuiltin1(name)) {
-        if (args.length != 1) {
-          throw new Error("ParseError: Builtin function " + name + " takes 1 argument");
-        }
-        return {
-          tag: "builtin1", name, arg: args[0]
-        }
-      } else if (isBuiltin2(name)) {
-        if (args.length != 2) {
-          throw new Error("ParseError: Builtin function " + name + " takes 2 arguments");
-        }
-        return {
-          tag: "builtin2", name, arg1: args[0], arg2: args[1]
-        }
-      }
+      // TODO: generalize builtin functions
+      // if (isBuiltin1(name)) {
+      //   if (args.length != 1) {
+      //     throw new Error("ParseError: Builtin function " + name + " takes 1 argument");
+      //   }
+      //   return {
+      //     tag: "builtin1", name, arg: args[0]
+      //   }
+      // } else if (isBuiltin2(name)) {
+      //   if (args.length != 2) {
+      //     throw new Error("ParseError: Builtin function " + name + " takes 2 arguments");
+      //   }
+      //   return {
+      //     tag: "builtin2", name, arg1: args[0], arg2: args[1]
+      //   }
+      // }
       return {
-        tag: "call", name, args
+        tag: "call", func, args
       }
+    case "MemberExpression":
+      c.firstChild(); // VariableName or expr
+      var obj = traverseExpr(c, s);
+      c.nextSibling(); // "."
+      c.nextSibling(); // PropertyName
+      var name = s.substring(c.from, c.to);
+      c.parent(); // MemberExpression
+      return { tag: "id", obj, name }
     default:
       throw new Error("ParseError: Could not parse expr " + c.type.name);
   }
 }
 
-export function traverseIf(c: TreeCursor, s: string): { tag: "if", cond: Expr<null>, then: Stmt<null>[], else: Stmt<null>[]} {
+export function traverseIf(c: TreeCursor, s: string): { tag: "if", cond: Expr<null>, then: Stmt<null>[], else: Stmt<null>[] } {
   c.nextSibling(); // condition
   var cond = traverseExpr(c, s);
   c.nextSibling(); // Body then
@@ -210,14 +221,17 @@ export function traverseIf(c: TreeCursor, s: string): { tag: "if", cond: Expr<nu
   if (then["funcdefs"].length > 0) {
     throw new Error("ParseError: then body cannot have funcdefs");
   }
-  if (!c.nextSibling()){ // "elif" or "else" or end
+  if (then["classdefs"].length > 0) {
+    throw new Error("ParseError: then body cannot have classdefs")
+  }
+  if (!c.nextSibling()) { // "elif" or "else" or end
     return { tag: "if", cond, then: then["stmts"], else: [] };
-  } 
+  }
   if (c.name === "elif") {
     c.nextSibling; // Body elif
     var elif = [traverseIf(c, s)];
     return { tag: "if", cond, then: then["stmts"], else: elif };
-  } 
+  }
   c.nextSibling(); // Body else
   c.firstChild(); // ":"
   c.nextSibling(); // stmt
@@ -229,6 +243,9 @@ export function traverseIf(c: TreeCursor, s: string): { tag: "if", cond: Expr<nu
   if (else_["funcdefs"].length > 0) {
     throw new Error("ParseError: else body cannot have funcdefs");
   }
+  if (then["classdefs"].length > 0) {
+    throw new Error("ParseError: else body cannot have classdefs")
+  }
   return { tag: "if", cond, then: then["stmts"], else: else_["stmts"] };
 }
 
@@ -238,19 +255,43 @@ export function traverseStmt(c: TreeCursor, s: string): Stmt<null> {
 
   switch (c.type.name) {
     case "AssignStatement":
-      c.firstChild(); // VariableName
-      var name = s.substring(c.from, c.to);
-      c.nextSibling(); // TypeDef
-      if (typeNameCheck(c, "TypeDef")) {
-        c.parent();
-        // Deal in traverseVarInit
-        return { tag: "varInit" };
+      c.firstChild(); // VariableName or MemberExpression
+      if (typeNameCheck(c, "VariableName")) {
+        var name = s.substring(c.from, c.to);
+        c.nextSibling(); // TypeDef
+        if (typeNameCheck(c, "TypeDef")) {
+          c.parent();
+          // Deal in traverseVarInit
+          return { tag: "varInit" };
+        }
+        c.nextSibling(); // AssignOp
+        c.nextSibling(); // Expr
+        var value = traverseExpr(c, s);
+        c.parent(); // AssignStatement
+        return {
+          tag: "assign",
+          target: {
+            tag: "id",
+            name
+          },
+          value
+        }
       }
-      c.nextSibling(); // AssignOp
-      c.nextSibling(); // Expr
-      var value = traverseExpr(c, s);
-      c.parent(); // AssignStatement
-      return { tag: "assign", name, value }
+      else if (typeNameCheck(c, "MemberExpression")) {
+        var target = traverseExpr(c, s);
+        c.nextSibling() // AssignOp
+        c.nextSibling() // Expr
+        var value = traverseExpr(c, s);
+        c.parent();
+        return {
+          tag: "assign",
+          target,
+          value
+        }
+      }
+      else {
+        throw new Error("ParseError: cannot assign to " + c.type.name)
+      }
     case "IfStatement":
       // TODO: elif
       c.firstChild(); // "if"
@@ -273,6 +314,9 @@ export function traverseStmt(c: TreeCursor, s: string): Stmt<null> {
       if (loop["funcdefs"].length > 0) {
         throw new Error("ParseError: while body cannot have funcdefs");
       }
+      if (loop["classdefs"].length > 0) {
+        throw new Error("ParseError: while body cannot have classdefs");
+      }
       return { tag: "while", cond, loop: loop["stmts"] }
     case "PassStatement":
       return { tag: "pass" }
@@ -280,7 +324,7 @@ export function traverseStmt(c: TreeCursor, s: string): Stmt<null> {
       c.firstChild(); // "return"
       var retExpr: Expr<null> = { tag: "literal", value: { tag: "none" } };
       // TODO: Check if this is a bug in the lexer parser
-      if (c.nextSibling() && c.name != "⚠"){ // Expr or failed if "return" 
+      if (c.nextSibling() && c.name != "⚠") { // Expr or failed if "return" 
         retExpr = traverseExpr(c, s);
       }
       c.parent(); // "ReturnStatement"
@@ -338,7 +382,7 @@ export function traverseFuncDef(c: TreeCursor, s: string): FuncDef<null> {
   c.nextSibling(); // ParamList
   var params = traverseParams(c, s);
   c.nextSibling(); // go to Body or TypeDef
-  var ret: Type = { tag: "object", name: "NoneType" };
+  var ret: Type = { tag: "object", name: "None" };
   if (typeNameCheck(c, "TypeDef")) {
     ret = traverseType(c, s);
     c.nextSibling(); // go to Body
@@ -351,31 +395,40 @@ export function traverseFuncDef(c: TreeCursor, s: string): FuncDef<null> {
   if (body["funcdefs"].length > 0) {
     throw new Error("ParseError: function body cannot have funcdefs");
   }
+  if (body["classdefs"].length > 0) {
+    throw new Error("ParseError: function body cannot have classdefs")
+  }
   return { name, params, body, ret };
 }
 
-export function traverseClassDef(c: TreeCursor, s: string): ClassDef<null> { 
+export function traverseClassDef(c: TreeCursor, s: string): ClassDef<null> {
+
+  console.log("traverseClassDef", c.type.name);
 
   c.firstChild() // "class"
   c.nextSibling() // VariableName
   var name = s.substring(c.from, c.to)
   c.nextSibling() // ArgList
   var args = traverseArgs(c, s)
-  if (args.length !== 1){
+  if (args.length !== 1) {
     throw new Error("ParseError: class can and must have one super class")
   }
-  if (args[0].tag !== "id"){
+  if (args[0].tag !== "id") {
     throw new Error("ParseError: invalid super class for class " + name)
   }
   c.nextSibling() // Body
+  c.firstChild() // ":"
+  c.nextSibling() // stmt
   var body = traverseBody(c, s)
-  if (body.classdefs.length !== 0){
+  c.parent() // Body
+  c.parent() // ClassDefinition
+  if (body.classdefs.length !== 0) {
     throw new Error("ParseError: class body cannot have classdefs");
   }
-  if (body.stmts.length !== 0){
+  if (body.stmts.length !== 0) {
     throw new Error("ParseError: class body cannot have stmts");
   }
-  return {name, super: args[0].name, body}
+  return { name, super: args[0].name, body }
 }
 
 export function traverse(c: TreeCursor, s: string): Body<null> {
@@ -384,7 +437,7 @@ export function traverse(c: TreeCursor, s: string): Body<null> {
       c.firstChild();
       const prog = traverseBody(c, s);
       c.parent();
-      console.log("traversed " + prog.varinits.length + " varinits, " + prog.funcdefs.length + " funcdefs, and " + prog.stmts.length + " statements");
+      console.log("traversed " + prog.varinits.length + " varinits, " + prog.funcdefs.length + " funcdefs, " + prog.classdefs.length + " classdefs, and " + prog.stmts.length + " statements");
       return prog;
     default:
       throw new Error("ParseError: Could not parse program at " + c.node.from + " " + c.node.to);

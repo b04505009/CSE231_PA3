@@ -1,46 +1,143 @@
-import { Body, Type, Expr, Stmt, Literal, BinOp, VarInit, FuncDef, TypedVar, isEqualType, isEqualPrimitiveType } from "./ast";
+import { Body, Type, Expr, Stmt, Literal, BinOp, VarInit, FuncDef, TypedVar, ClassDef, isEqualType, isEqualPrimitiveType } from "./ast";
 
 type TypeEnv = {
-  var: Map<string, Type>;
-  func: Map<string, [Type[], Type]>;
+  var?: Map<string, Type>;
+  func?: Map<string, [Type[], Type]>;
+  class?: Set<string>;
   ret?: Type;
+}
+
+export function funcNameMangling(name: string, objName: string, args: Type[]): string {
+  return objName + "$$" + name + "$$" + args.map(t => t.name.toString()).join("$");
 }
 
 export function typeCheckProgram(prog: Body<null>): Body<Type> {
   const globalEnv: TypeEnv = {
     var: new Map(),
     func: new Map(),
+    class: new Set(),
   }
+  globalEnv.func.set("$$print$$int",
+    [
+      [{ tag: "primitive", name: "int" }],
+      { tag: "object", name: "None" }
+    ]
+  );
+  globalEnv.func.set("$$print$$bool",
+    [
+      [{ tag: "primitive", name: "bool" }],
+      { tag: "object", name: "None" }
+    ]
+  );
+  globalEnv.func.set("$$print$$none",
+    [
+      [{ tag: "object", name: "None" }],
+      { tag: "object", name: "None" }
+    ]
+  );
+
   const typedProg: Body<Type> = {
     varinits: [],
     stmts: [],
     funcdefs: [],
+    classdefs: [],
   }
 
-  // console.log("typeCheckProgram:", prog)
-  
+  console.log("typeCheckProgram:", prog)
+
+  // Check varinits
   typedProg.varinits = typeCheckVarInits(prog.varinits);
+  // Add varinits to globalEnv
   prog.varinits.forEach(varinit => {
     globalEnv.var.set(varinit.name, varinit.type);
   });
+
+  // mangle funcdef names
+  prog.funcdefs.forEach((funcdef, i) => {
+    const mangledFuncName = funcNameMangling(funcdef.name, "", funcdef.params.map(p => p.type));
+    console.log("mangledFuncName:", mangledFuncName)
+    prog.funcdefs[i].name = mangledFuncName;
+  });
+  // Check funcdefs
+  // Add funcdefs to globalEnv
   prog.funcdefs.forEach(funcdef => {
     if (globalEnv.var.has(funcdef.name) || globalEnv.func.has(funcdef.name)) {
       throw new Error("ReferenceError: Duplicate declaration of identifier in same scope: " + funcdef.name);
     }
-    globalEnv.func.set(funcdef.name, [funcdef.params.map(param => param.type), funcdef.ret]);
+    globalEnv.func.set(funcdef.name, [funcdef.params.map(p => p.type), funcdef.ret]);
   });
+
+  // Check classdefs
+  // Add classdefs to globalEnv
+  prog.classdefs.forEach(classdef => {
+    if (globalEnv.var.has(classdef.name) || globalEnv.func.has(classdef.name) || globalEnv.class.has(classdef.name)) {
+      throw new Error("ReferenceError: Duplicate declaration of identifier in same scope: " + classdef.name);
+    }
+    globalEnv.class.add(classdef.name);
+
+    // mangle class method names
+    // Add mangled class methods to globalEnv
+    classdef.body.funcdefs.forEach((funcdef, i) => {
+      const mangledFuncName = funcNameMangling(funcdef.name, classdef.name, funcdef.params.map(p => p.type));
+      console.log("method mangledFuncName:", mangledFuncName)
+      classdef.body.funcdefs[i].name = mangledFuncName;
+      globalEnv.func.set(mangledFuncName, [funcdef.params.map(p => p.type), funcdef.ret]);
+    });
+  })
+
+  // Type check
   prog.funcdefs.forEach(funcdef => {
-    typedProg.funcdefs.push(typeCheckFuncDef(funcdef, globalEnv));
+    typedProg.funcdefs.push(typeCheckFuncDef(funcdef, {}, globalEnv));
   });
+  prog.classdefs.forEach(classdef => {
+    typedProg.classdefs.push(typeCheckClassDef(classdef, globalEnv));
+  });
+
   if (checkReturn(prog.stmts)) {
     throw new Error("TypeError: Return Statement cannot appear at the top level");
   }
-  typedProg.stmts = typeCheckStmts(prog.stmts, globalEnv, {var: new Map(), func: new Map()});
-  typedProg.a = { tag: "object", name: "NoneType" }
+  typedProg.stmts = typeCheckStmts(prog.stmts, globalEnv, { var: new Map(), func: new Map(), class: new Set() });
+  typedProg.a = { tag: "object", name: "None" }
   if (typedProg.stmts.length > 0) {
     typedProg.a = typedProg.stmts[typedProg.stmts.length - 1].a;
   }
   return typedProg;
+}
+
+// method names are already mangled
+export function typeCheckClassDef(classdef: ClassDef<null>, globalEnv: TypeEnv): ClassDef<Type> {
+  const classEnv: TypeEnv = {
+    var: new Map(),
+    func: new Map(),
+  };
+  if (classdef.super !== "object") {
+    throw new Error("TypeError: Superclass must be object for now.");
+  }
+  const memberInits: VarInit<null>[] = classdef.body.varinits;
+  const methodDefs: FuncDef<null>[] = classdef.body.funcdefs;
+
+  const typedClass: Body<Type> = {
+    varinits: [],
+    funcdefs: [],
+  }
+
+  // Check varinits
+  typedClass.varinits = typeCheckVarInits(memberInits);
+  // Add varinits to classEnv
+  memberInits.forEach(memberinit => {
+    classEnv.var.set(memberinit.name, memberinit.type);
+  });
+
+  // Add methoddefs to classEnv
+  methodDefs.forEach(methoddef => {
+    if (classEnv.var.has(methoddef.name)) {
+      throw new Error("ReferenceError: Duplicate declaration of identifier in same scope: " + methoddef.name);
+    }
+    classEnv.func.set(methoddef.name, [methoddef.params.map(p => p.type), methoddef.ret]);
+  })
+
+
+
 }
 
 export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalEnv: TypeEnv): Stmt<Type>[] {
@@ -48,9 +145,10 @@ export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalE
   const refEnv: TypeEnv = {
     var: new Map([...nonLocalEnv.var, ...localEnv.var]),
     func: new Map([...nonLocalEnv.func, ...localEnv.func]),
+    class: new Set([...nonLocalEnv.class, ...localEnv.class]),
     ret: localEnv.ret,
   }
-  
+
   const typedStmts: Stmt<Type>[] = [];
   stmts.forEach(stmt => {
 
@@ -58,44 +156,47 @@ export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalE
 
     switch (stmt.tag) {
       case "assign":
-        if (!localEnv.var.has(stmt.name)) {
-          if (!nonLocalEnv.var.has(stmt.name)){
-            throw new Error("ReferenceError: Undefined variable " + stmt.name);
-          }
-          throw new Error("ReferenceError: Cannot assign to non-local variable " + stmt.name);
+        if (stmt.target.tag !== "id") {
+          throw new Error(`TypeError: Invalid target for assignment: ${stmt.target}`);
+        }
+        if (!refEnv.var.has(stmt.target.name)) {
+          throw new Error("ReferenceError: Undefined variable: " + stmt.target.name);
+        }
+        if (!localEnv.var.has(stmt.target.name)) {
+          throw new Error("ReferenceError: Cannot assign to non-local variable " + stmt.target.name);
         }
         const typedValue = typeCheckExpr(stmt.value, refEnv);
-        if (!isEqualType(typedValue.a, refEnv.var.get(stmt.name))) {
-          throw new Error(`TypeError: Cannot assign value of type ${typedValue.a.name} to variable ${stmt.name} of type ${refEnv.var.get(stmt.name).name}`);
+        if (!isEqualType(typedValue.a, refEnv.var.get(stmt.target.name))) {
+          throw new Error(`TypeError: Cannot assign value of type ${typedValue.a.name} to variable ${stmt.target.name} of type ${refEnv.var.get(stmt.target.name).name}`);
         }
-        typedStmts.push({ ...stmt, a: { tag: "object", name: "NoneType" } });
+        typedStmts.push({ ...stmt, a: { tag: "object", name: "None" } });
         break;
       case "return":
         const typedRet = typeCheckExpr(stmt.ret, refEnv);
         if (!isEqualType(typedRet.a, refEnv.ret)) {
           throw new Error(`TypeError: Cannot return value of type ${typedRet.a.name} from function with return type ${refEnv.ret.name}`);
         }
-        typedStmts.push({ ...stmt, a: { tag: "object", name: "NoneType" }, ret: typedRet });
+        typedStmts.push({ ...stmt, a: { tag: "object", name: "None" }, ret: typedRet });
         return typedStmts;
       case "if":
         const typedCond_if = typeCheckExpr(stmt.cond, refEnv);
-        if (!isEqualPrimitiveType(typedCond_if.a, "Bool")) {
+        if (!isEqualPrimitiveType(typedCond_if.a, "bool")) {
           throw new Error(`TypeError: Cannot use value of type ${typedCond_if.a.name} as condition`);
         }
         const typedThen = typeCheckStmts(stmt.then, localEnv, nonLocalEnv);
         const typedElse = typeCheckStmts(stmt.else, localEnv, nonLocalEnv);
-        typedStmts.push({ ...stmt, a: { tag: "object", name: "NoneType" }, cond: typedCond_if, then: typedThen, else: typedElse });
+        typedStmts.push({ ...stmt, a: { tag: "object", name: "None" }, cond: typedCond_if, then: typedThen, else: typedElse });
         break;
       case "while":
         const typedCond_while = typeCheckExpr(stmt.cond, refEnv);
-        if (!isEqualPrimitiveType(typedCond_while.a, "Bool")) {
+        if (!isEqualPrimitiveType(typedCond_while.a, "bool")) {
           throw new Error(`TypeError: Cannot use value of type ${typedCond_while.a} as condition`);
         }
         const typedLoop = typeCheckStmts(stmt.loop, localEnv, nonLocalEnv);
-        typedStmts.push({ ...stmt, a: { tag: "object", name: "NoneType" }, cond: typedCond_while, loop: typedLoop });
+        typedStmts.push({ ...stmt, a: { tag: "object", name: "None" }, cond: typedCond_while, loop: typedLoop });
         break;
       case "pass":
-        typedStmts.push({ ...stmt, a: { tag: "object", name: "NoneType" } });
+        typedStmts.push({ ...stmt, a: { tag: "object", name: "None" } });
         break;
       case "expr":
         const typedExpr = typeCheckExpr(stmt.expr, refEnv);
@@ -134,16 +235,13 @@ export function checkReturn(stmts: Stmt<Type>[]): boolean {
   }
   if (lastStmt.tag === "while") {
     return checkReturn(lastStmt.loop);
-  } 
+  }
   return false;
 }
 
-
-
-export function typeCheckFuncDef(def: FuncDef<null>, nonLocalEnv: TypeEnv): FuncDef<Type> {
-  const localEnv: TypeEnv = { 
+export function typeCheckFuncDef(def: FuncDef<null>, classEnv: TypeEnv, nonLocalEnv: TypeEnv): FuncDef<Type> {
+  const localEnv: TypeEnv = {
     var: new Map(),
-    func: new Map(),
   };
   const typedParams = def.params.map(param => ({ ...param, a: param.type }))
   // Add parameters to local env
@@ -167,12 +265,12 @@ export function typeCheckFuncDef(def: FuncDef<null>, nonLocalEnv: TypeEnv): Func
   const typedStmts = typeCheckStmts(def.body.stmts, localEnv, nonLocalEnv);
 
   // If return type is not none, check if the function returns a value in all the paths
-  if (!isEqualType(def.ret, { tag: "object", name: "NoneType" }) && !checkReturn(typedStmts)) {
+  if (!isEqualType(def.ret, { tag: "object", name: "None" }) && !checkReturn(typedStmts)) {
     throw new Error("TypeError: All paths in this method / function must have a return value: " + def.name);
-  } 
+  }
   // If return type is none, add a return statement if there isn't one
-  if (isEqualType(def.ret, { tag: "object", name: "NoneType" }) && !checkReturn(typedStmts)) {
-    typedStmts.push({ tag: "return", ret: { tag: "literal", a: { tag: "object", name: "NoneType" }, value: {tag: "none" } } });
+  if (isEqualType(def.ret, { tag: "object", name: "None" }) && !checkReturn(typedStmts)) {
+    typedStmts.push({ tag: "return", ret: { tag: "literal", a: { tag: "object", name: "None" }, value: { tag: "none" } } });
   }
 
   return { ...def, params: typedParams, body: { a: def.ret, varinits: typedInits, stmts: typedStmts } };
@@ -221,18 +319,18 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
       switch (expr.op) {
         case BinOp.Eq:
         case BinOp.Ne:
-          if (isEqualPrimitiveType(lhs.a, "Int")) {
+          if (isEqualPrimitiveType(lhs.a, "int")) {
             return {
               ...expr,
-              a: { tag: "primitive", name: "Bool" },
+              a: { tag: "primitive", name: "bool" },
               lhs: lhs,
               rhs: rhs
             };
           }
-          if (isEqualPrimitiveType(lhs.a, "Bool")) {
+          if (isEqualPrimitiveType(lhs.a, "bool")) {
             return {
               ...expr,
-              a: { tag: "primitive", name: "Bool" },
+              a: { tag: "primitive", name: "bool" },
               lhs: lhs,
               rhs: rhs
             };
@@ -242,10 +340,10 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
         case BinOp.Le:
         case BinOp.Gt:
         case BinOp.Ge:
-          if (isEqualPrimitiveType(lhs.a, "Int")) {
+          if (isEqualPrimitiveType(lhs.a, "int")) {
             return {
               ...expr,
-              a: { tag: "primitive", name: "Bool" },
+              a: { tag: "primitive", name: "bool" },
               lhs: lhs,
               rhs: rhs
             };
@@ -256,10 +354,10 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
         case BinOp.Mul:
         case BinOp.Div:
         case BinOp.Mod:
-          if (isEqualPrimitiveType(lhs.a, "Int")) {
+          if (isEqualPrimitiveType(lhs.a, "int")) {
             return {
               ...expr,
-              a: { tag: "primitive", name: "Int" },
+              a: { tag: "primitive", name: "int" },
               lhs: lhs,
               rhs: rhs
             };
@@ -269,7 +367,7 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
           if (lhs.a.tag === "object") {
             return {
               ...expr,
-              a: { tag: "primitive", name: "Bool" },
+              a: { tag: "primitive", name: "bool" },
               lhs: lhs,
               rhs: rhs
             };
@@ -280,70 +378,98 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
           throw new Error("TypeError: Unknown operator " + expr.op);
       }
     case "call":
-      // Check if function exists
-      if (!refEnv.func.has(expr.name)) {
-        throw new Error(`ReferenceError: Undefined function ${expr.name}`);
+      if (expr.func.tag !== "id") {
+        throw new Error("TypeError: Function name must be an identifier");
       }
-      // Check if function has correct number of arguments
-      const func = refEnv.func.get(expr.name);
-      if (func[0].length !== expr.args.length) {
-        throw new Error(`TypeError: Function ${expr.name} expects ${func[0].length} arguments, but ${expr.args.length} given`);
-      }
-      // Check if arguments are of correct type
       const typedArgs = expr.args.map(arg => typeCheckExpr(arg, refEnv));
       const typedArgsType = typedArgs.map(arg => arg.a);
-      typedArgsType.forEach((argType, i) => {
-        if (!isEqualType(func[0][i], argType)){
-          throw new Error(`TypeError: Function ${expr.name} expects argument ${i} to be ${func[0][i]}, but ${argType} given`);
+      if (expr.func.obj === undefined || expr.func.obj === null) {
+        const funcName = funcNameMangling(expr.func.name, "", typedArgsType)
+        if (!refEnv.func.has(funcName)) {
+          throw new Error(`ReferenceError: Undefined function ${funcName}`);
         }
-      });
-      return {
-        ...expr,
-        a: func[1],
-        args: typedArgs
-      };
-    case "builtin1":
-      const typedArg = typeCheckExpr(expr.arg, refEnv);
-      switch (expr.name) {
-        case "print":
-          // if (!isType(typedArg.a)) {
-          //   throw new Error("TypeError: Cannot apply builtin1 function " + expr.name + " to type " + typedArg.a);
-          // }
-          return {
-            ...expr,
-            a: typedArg.a,
-            arg: typedArg
-          };
-        case "abs":
-          if (!isEqualPrimitiveType(typedArg.a, "Int")) {
-            throw new Error("TypeError: Cannot apply builtin1 function " + expr.name + " to type " + typedArg.a);
-          }
-          return {
-            ...expr,
-            a: { tag: "primitive", name: "Int" },
-            arg: typedArg
-          };
+        return {
+          ...expr,
+          a: refEnv.func.get(funcName)[1],
+          func: { tag: "id", name: funcName },
+          args: typedArgs
         }
-      throw new Error("TypeError: Unknown builtin1 function " + expr.name);
-    case "builtin2":
-      const typedArg1 = typeCheckExpr(expr.arg1, refEnv);
-      const typedArg2 = typeCheckExpr(expr.arg2, refEnv);
-      switch (expr.name) {
-        case "min":
-        case "max":
-        case "pow":
-          if (!isEqualPrimitiveType(typedArg1.a, "Int") || !isEqualPrimitiveType(typedArg2.a, "Int")) {
-            throw new Error("TypeError: Cannot apply builtin2 function " + expr.name + " to type " + typedArg1.a + " and " + typedArg2.a);
-          }
-          return {
-            ...expr,
-            a: { tag: "primitive", name: "Int" },
-            arg1: typedArg1,
-            arg2: typedArg2
-          };
-        default:
-          throw new Error("TypeError: Unknown builtin2 function " + expr.name);
       }
+      else {
+        if (expr.func.obj.tag !== "id") {
+          throw new Error("TypeError: object calling function must be an identifier");
+        }
+        const funcName = funcNameMangling(expr.func.name, expr.func.obj.name, typedArgsType)
+        if (!refEnv.func.has(funcName)) {
+          throw new Error(`ReferenceError: Undefined function ${funcName}`);
+        }
+        return {
+          ...expr,
+          a: refEnv.func.get(funcName)[1],
+          func: { tag: "id", name: funcName },
+          args: typedArgs
+        }
+      }
+    // Check if function has correct number of arguments
+    // const funcType = refEnv.func.get(funcName);
+    // if (funcType[0].length !== expr.args.length) {
+    //   throw new Error(`TypeError: Function ${funcName} expects ${funcType[0].length} arguments, but ${expr.args.length} given`);
+    // }
+    // Check if arguments are of correct type
+    // const typedArgs = expr.args.map(arg => typeCheckExpr(arg, refEnv));
+    // const typedArgsType = typedArgs.map(arg => arg.a);
+    // typedArgsType.forEach((argType, i) => {
+    //   if (!isEqualType(funcType[0][i], argType)) {
+    //     throw new Error(`TypeError: Function ${funcName} expects argument ${i} to be ${funcType[0][i]}, but ${argType} given`);
+    //   }
+    // });
+    // return {
+    //   ...expr,
+    //   a: funcType[1],
+    //   args: typedArgs
+    // };
+    // case "builtin1":
+    //   const typedArg = typeCheckExpr(expr.arg, refEnv);
+    //   switch (expr.name) {
+    //     case "print":
+    //       // if (!isType(typedArg.a)) {
+    //       //   throw new Error("TypeError: Cannot apply builtin1 function " + expr.name + " to type " + typedArg.a);
+    //       // }
+    //       return {
+    //         ...expr,
+    //         a: typedArg.a,
+    //         arg: typedArg
+    //       };
+    //     case "abs":
+    //       if (!isEqualPrimitiveType(typedArg.a, "Int")) {
+    //         throw new Error("TypeError: Cannot apply builtin1 function " + expr.name + " to type " + typedArg.a);
+    //       }
+    //       return {
+    //         ...expr,
+    //         a: { tag: "primitive", name: "Int" },
+    //         arg: typedArg
+    //       };
+    //   }
+    //   throw new Error("TypeError: Unknown builtin1 function " + expr.name);
+    // case "builtin2":
+    //   const typedArg1 = typeCheckExpr(expr.arg1, refEnv);
+    //   const typedArg2 = typeCheckExpr(expr.arg2, refEnv);
+    //   switch (expr.name) {
+    //     case "min":
+    //     case "max":
+    //     case "pow":
+    //       if (!isEqualPrimitiveType(typedArg1.a, "Int") || !isEqualPrimitiveType(typedArg2.a, "Int")) {
+    //         throw new Error("TypeError: Cannot apply builtin2 function " + expr.name + " to type " + typedArg1.a + " and " + typedArg2.a);
+    //       }
+    //       return {
+    //         ...expr,
+    //         a: { tag: "primitive", name: "Int" },
+    //         arg1: typedArg1,
+    //         arg2: typedArg2
+    //       };
+    //     default:
+    //       throw new Error("TypeError: Unknown builtin2 function " + expr.name);
+    //   }
     default:
       // @ts-ignore
       throw new Error("TypeError: Unknown expression " + expr.tag);
@@ -355,18 +481,18 @@ export function typeCheckLiteral(lit: Literal<null>): Literal<Type> {
     case "number":
       return {
         ...lit,
-        a: { tag: "primitive", name: "Int" }
+        a: { tag: "primitive", name: "int" }
       };
     case "bool":
       return {
         ...lit,
-        a: { tag: "primitive", name: "Bool" }
+        a: { tag: "primitive", name: "bool" }
       };
     case "none":
     default:
       return {
         ...lit,
-        a: { tag: "object", name: "NoneType" }
+        a: { tag: "object", name: "None" }
       };
   }
 }
