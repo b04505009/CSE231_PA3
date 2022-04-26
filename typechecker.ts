@@ -127,7 +127,11 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
   if (checkReturn(prog.stmts)) {
     throw new Error("TypeError: Return Statement cannot appear at the top level");
   }
-  typedProg.stmts = typeCheckStmts(prog.stmts, globalEnv, {});
+  typedProg.stmts = typeCheckStmts(prog.stmts, globalEnv, {
+    var: new Map(),
+    func: new Map(),
+    class: new Map(),
+  });
   typedProg.a = { tag: "object", name: "None" }
   if (typedProg.stmts.length > 0) {
     typedProg.a = typedProg.stmts[typedProg.stmts.length - 1].a;
