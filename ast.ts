@@ -15,7 +15,7 @@ export type TypedVar<A> = {
 }
 
 export type FuncDef<A> = {
-  a?: A, name: string, class?: string, params: TypedVar<A>[], body: Body<A>, ret: Type
+  a?: A, name: string, params: TypedVar<A>[], body: Body<A>, ret: Type
 }
 
 export type Stmt<A> =

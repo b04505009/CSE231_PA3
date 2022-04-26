@@ -1,22 +1,33 @@
-import { Body, Type, Expr, Stmt, Literal, BinOp, VarInit, FuncDef, TypedVar, ClassDef, isEqualType, isEqualPrimitiveType } from "./ast";
+import { Body, Type, Expr, Stmt, Literal, BinOp, VarInit, FuncDef, NoneType, ClassDef, isEqualType, isEqualPrimitiveType } from "./ast";
 
 type TypeEnv = {
   var?: Map<string, Type>;
   func?: Map<string, [Type[], Type]>;
-  class?: Set<string>;
+  mangledFuncs?: Set<string>;
+  class?: Map<string, TypeEnv>;
   ret?: Type;
+}
+
+const globalEnv: TypeEnv = {
+  var: new Map(),
+  func: new Map(),
+  mangledFuncs: new Set(),
+  class: new Map(),
 }
 
 export function funcNameMangling(name: string, objName: string, args: Type[]): string {
   return objName + "$$" + name + "$$" + args.map(t => t.name.toString()).join("$");
 }
 
-export function typeCheckProgram(prog: Body<null>): Body<Type> {
-  const globalEnv: TypeEnv = {
-    var: new Map(),
-    func: new Map(),
-    class: new Set(),
+export function checkDuplicateID(name: string, mapList: (Map<string, any> | Set<string>)[]): void {
+  for (const mapOrSet of mapList) {
+    if (mapOrSet.has(name)) {
+      throw new Error("ReferenceError: Duplicate declaration of identifier in same scope: " + name);
+    }
   }
+}
+
+export function typeCheckProgram(prog: Body<null>): Body<Type> {
   globalEnv.func.set("$$print$$int",
     [
       [{ tag: "primitive", name: "int" }],
@@ -45,58 +56,78 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
 
   console.log("typeCheckProgram:", prog)
 
-  // Check varinits
-  typedProg.varinits = typeCheckVarInits(prog.varinits);
   // Add varinits to globalEnv
   prog.varinits.forEach(varinit => {
+    checkDuplicateID(varinit.name, [globalEnv.var]);
     globalEnv.var.set(varinit.name, varinit.type);
   });
 
-  // mangle funcdef names
-  prog.funcdefs.forEach((funcdef, i) => {
-    const mangledFuncName = funcNameMangling(funcdef.name, "", funcdef.params.map(p => p.type));
-    console.log("mangledFuncName:", mangledFuncName)
-    prog.funcdefs[i].name = mangledFuncName;
-  });
-  // Check funcdefs
-  // Add funcdefs to globalEnv
+  // Add unmangled funcdefs to globalEnv
   prog.funcdefs.forEach(funcdef => {
-    if (globalEnv.var.has(funcdef.name) || globalEnv.func.has(funcdef.name)) {
-      throw new Error("ReferenceError: Duplicate declaration of identifier in same scope: " + funcdef.name);
-    }
+    // funcname cannot duplicate with var
+    checkDuplicateID(funcdef.name, [globalEnv.var]);
     globalEnv.func.set(funcdef.name, [funcdef.params.map(p => p.type), funcdef.ret]);
+  });
+
+  // Add mangled funcdefs to globalEnv
+  prog.funcdefs.forEach(funcdef => {
+    // mangled funcname cannot duplicate with each other
+    const mangledName = funcNameMangling(funcdef.name, "", funcdef.params.map(p => p.type));
+    checkDuplicateID(mangledName, [globalEnv.mangledFuncs]);
+    globalEnv.mangledFuncs.add(mangledName);
   });
 
   // Check classdefs
   // Add classdefs to globalEnv
   prog.classdefs.forEach(classdef => {
-    if (globalEnv.var.has(classdef.name) || globalEnv.func.has(classdef.name) || globalEnv.class.has(classdef.name)) {
-      throw new Error("ReferenceError: Duplicate declaration of identifier in same scope: " + classdef.name);
-    }
-    globalEnv.class.add(classdef.name);
+    // classname cannot duplicate with var, func, class
+    checkDuplicateID(classdef.name, [globalEnv.var, globalEnv.func, globalEnv.class]);
+    // Add class to globalEnv.class
+    globalEnv.class.set(classdef.name, {
+      var: new Map(),
+      func: new Map(),
+    });
 
-    // mangle class method names
-    // Add mangled class methods to globalEnv
-    classdef.body.funcdefs.forEach((funcdef, i) => {
-      const mangledFuncName = funcNameMangling(funcdef.name, classdef.name, funcdef.params.map(p => p.type));
-      console.log("method mangledFuncName:", mangledFuncName)
-      classdef.body.funcdefs[i].name = mangledFuncName;
-      globalEnv.func.set(mangledFuncName, [funcdef.params.map(p => p.type), funcdef.ret]);
+    // TODO: For class in class, we have to add all the members and methods of all the subclasses recursively
+
+    // Add varinits to globalEnv.class[classdef.name].var
+    classdef.body.varinits.forEach(varinit => {
+      checkDuplicateID(varinit.name, [globalEnv.class.get(classdef.name).var]);
+      globalEnv.class.get(classdef.name).var.set(varinit.name, varinit.type);
+    } );
+
+    // Add funcdefs to globalEnv.class[classdef.name].func
+    classdef.body.funcdefs.forEach(funcdef => {
+      // funcname cannot duplicate with var, func
+      checkDuplicateID(funcdef.name, [globalEnv.class.get(classdef.name).var]);
+      // Add func to globalEnv.class
+      globalEnv.class.get(classdef.name).func.set(funcdef.name, [funcdef.params.map(p => p.type), funcdef.ret]);
+    });
+
+    // Add mangled funcdefs to globalEnv
+    classdef.body.funcdefs.forEach(funcdef => {
+      // mangled funcname cannot duplicate with each other
+      const mangledName = funcNameMangling(funcdef.name, classdef.name, funcdef.params.map(p => p.type));
+      checkDuplicateID(mangledName, [globalEnv.mangledFuncs]);
+      globalEnv.mangledFuncs.add(mangledName);
     });
   })
 
-  // Type check
+  // Check varinits
+  typedProg.varinits = typeCheckVarInits(prog.varinits);
+  // Check funcdefs
   prog.funcdefs.forEach(funcdef => {
-    typedProg.funcdefs.push(typeCheckFuncDef(funcdef, {}, globalEnv));
+    typedProg.funcdefs.push(typeCheckFuncDef(funcdef, globalEnv));
   });
+  // Check classdefs
   prog.classdefs.forEach(classdef => {
-    typedProg.classdefs.push(typeCheckClassDef(classdef, globalEnv));
+    typedProg.classdefs.push(typeCheckClassDef(classdef));
   });
 
   if (checkReturn(prog.stmts)) {
     throw new Error("TypeError: Return Statement cannot appear at the top level");
   }
-  typedProg.stmts = typeCheckStmts(prog.stmts, globalEnv, { var: new Map(), func: new Map(), class: new Set() });
+  typedProg.stmts = typeCheckStmts(prog.stmts, globalEnv, {});
   typedProg.a = { tag: "object", name: "None" }
   if (typedProg.stmts.length > 0) {
     typedProg.a = typedProg.stmts[typedProg.stmts.length - 1].a;
@@ -105,11 +136,8 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
 }
 
 // method names are already mangled
-export function typeCheckClassDef(classdef: ClassDef<null>, globalEnv: TypeEnv): ClassDef<Type> {
-  const classEnv: TypeEnv = {
-    var: new Map(),
-    func: new Map(),
-  };
+export function typeCheckClassDef(classdef: ClassDef<null>): ClassDef<Type> {
+
   if (classdef.super !== "object") {
     throw new Error("TypeError: Superclass must be object for now.");
   }
@@ -120,24 +148,14 @@ export function typeCheckClassDef(classdef: ClassDef<null>, globalEnv: TypeEnv):
     varinits: [],
     funcdefs: [],
   }
-
   // Check varinits
   typedClass.varinits = typeCheckVarInits(memberInits);
-  // Add varinits to classEnv
-  memberInits.forEach(memberinit => {
-    classEnv.var.set(memberinit.name, memberinit.type);
+  // Check funcdefs
+  methodDefs.forEach(funcdef => {
+    typedClass.funcdefs.push(typeCheckFuncDef(funcdef, globalEnv));
   });
-
-  // Add methoddefs to classEnv
-  methodDefs.forEach(methoddef => {
-    if (classEnv.var.has(methoddef.name)) {
-      throw new Error("ReferenceError: Duplicate declaration of identifier in same scope: " + methoddef.name);
-    }
-    classEnv.func.set(methoddef.name, [methoddef.params.map(p => p.type), methoddef.ret]);
-  })
-
-
-
+  
+  return { ...classdef, body: typedClass};
 }
 
 export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalEnv: TypeEnv): Stmt<Type>[] {
@@ -145,7 +163,7 @@ export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalE
   const refEnv: TypeEnv = {
     var: new Map([...nonLocalEnv.var, ...localEnv.var]),
     func: new Map([...nonLocalEnv.func, ...localEnv.func]),
-    class: new Set([...nonLocalEnv.class, ...localEnv.class]),
+    class: new Map([...nonLocalEnv.class, ...localEnv.class]),
     ret: localEnv.ret,
   }
 
@@ -239,7 +257,44 @@ export function checkReturn(stmts: Stmt<Type>[]): boolean {
   return false;
 }
 
-export function typeCheckFuncDef(def: FuncDef<null>, classEnv: TypeEnv, nonLocalEnv: TypeEnv): FuncDef<Type> {
+// TODO: localEnv should be created outside of this function and passed in?
+export function typeCheckFuncDef(def: FuncDef<null>, nonLocalEnv: TypeEnv): FuncDef<Type> {
+  const localEnv: TypeEnv = {
+    var: new Map(),
+  };
+  const typedParams = def.params.map(param => ({ ...param, a: param.type }))
+  // Add parameters to local env
+  typedParams.forEach(param => {
+    localEnv.var.set(param.name, param.type);
+  });
+  // Add local var to local env
+  const typedInits = typeCheckVarInits(def.body.varinits);
+  typedInits.forEach(init => {
+    checkDuplicateID(init.name, [localEnv.var]);
+    localEnv.var.set(init.name, init.type);
+  });
+
+  // TODO: function in function
+
+  // Add return type to local env
+  localEnv.ret = def.ret;
+  // Type check body
+  const typedStmts = typeCheckStmts(def.body.stmts, localEnv, nonLocalEnv);
+
+  // If return type is not none, check if the function returns a value in all the paths
+  if (!isEqualType(def.ret, { tag: "object", name: "None" }) && !checkReturn(typedStmts)) {
+    throw new Error("TypeError: All paths in this method / function must have a return value: " + def.name);
+  }
+  // If return type is none, add a return statement if there isn't one
+  if (isEqualType(def.ret, { tag: "object", name: "None" }) && !checkReturn(typedStmts)) {
+    typedStmts.push({ tag: "return", ret: { tag: "literal", a: { tag: "object", name: "None" }, value: { tag: "none" } } });
+  }
+
+  return { ...def, params: typedParams, body: { a: def.ret, varinits: typedInits, stmts: typedStmts } };
+}
+
+// Merge to typeCheckFuncDef
+export function typeCheckMethodDef(def: FuncDef<null>, classEnv: TypeEnv, nonLocalEnv: TypeEnv): FuncDef<Type> {
   const localEnv: TypeEnv = {
     var: new Map(),
   };
