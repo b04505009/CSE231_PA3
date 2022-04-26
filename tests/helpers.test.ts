@@ -1,5 +1,4 @@
 import { importObject } from "./import-object.test";
-import { compile } from '../compiler';
 import { parse } from '../parser';
 import { typeCheckProgram } from '../typechecker';
 import { run as run_ } from '../runner';
