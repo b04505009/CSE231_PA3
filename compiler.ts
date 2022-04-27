@@ -142,12 +142,8 @@ function codeGenExpr(expr: Expr<Type>, localEnv: LocalEnv): Array<string> {
       const opStmts = codeGenBinOp(expr.op);
       return [...leftStmts, ...rightStmts, opStmts];
     case "call":
-      // Just for TS compilation. Should never happen.
-      if (expr.func.tag !== "id") {
-        throw new Error("codeGenExpr: call: func is not an id");
-      }
       const args = expr.args.map(a => codeGenExpr(a, localEnv)).flat();
-      switch (expr.func.name) {
+      switch (expr.name) {
         case "$$print$$int":
           return [...args, "(call $print_num)"];
         case "$$print$$bool":
@@ -155,45 +151,8 @@ function codeGenExpr(expr: Expr<Type>, localEnv: LocalEnv): Array<string> {
         case "$$print$$None":
           return [...args, "(call $print_none)"];
         default:
-          return [...args, `(call $${expr.func.name})`];
+          return [...args, `(call $${expr.name})`];
       }
-    // case "builtin1":
-    //   const argStmts = codeGenExpr(expr.arg, localEnv);
-    //   switch (expr.name) {
-    //     case "print":
-    //       if (expr.arg.a.tag == "primitive") {
-    //         switch (expr.arg.a.name) {
-    //           case "Int":
-    //             return [...argStmts, "(call $print_num)"];
-    //           case "Bool":
-    //             return [...argStmts, "(call $print_bool)"];
-    //         }
-    //       } else {
-    //         switch (expr.arg.a.name) {
-    //           case "NoneType":
-    //             return [...argStmts, "(call $print_none)"];
-    //           default:
-    //             throw new Error("Unsupported type for print" + expr.arg.a.name);
-    //         }
-    //       }
-    //     case "abs":
-    //       return [...argStmts, `(call $abs)`];
-    //     default:
-    //       throw new Error("Unsupported builtin1: " + expr.name);
-    //   }
-    // case "builtin2":
-    //   const arg1Stmts = codeGenExpr(expr.arg1, localEnv);
-    //   const arg2Stmts = codeGenExpr(expr.arg2, localEnv);
-    //   switch (expr.name) {
-    //     case "min":
-    //       return [...arg1Stmts, ...arg2Stmts, `(call $min)`];
-    //     case "max":
-    //       return [...arg1Stmts, ...arg2Stmts, `(call $max)`];
-    //     case "pow":
-    //       return [...arg1Stmts, ...arg2Stmts, `(call $pow)`];
-    //     default:
-    //       throw new Error("Unsupported builtin2: " + expr.name);
-    //   }
     default:
     // throw new Error("Unsupported expr: " + expr.tag);
   }

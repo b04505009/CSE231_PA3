@@ -21,8 +21,6 @@ export type FuncDef<A> = {
 export type Stmt<A> =
   // target should be { tag: "id" }
   | { a?: A, tag: "assign", target: Expr<A>, value: Expr<A> }
-  // | { a?: A, tag: "assign", obj?: Expr<A>, name: string, value: Expr<A> }
-  // | { a?: A, tag: "memberAssign", obj: Expr<A>, name: string, value: Expr<A> }
   | { a?: A, tag: "if", cond: Expr<A>, then: Stmt<A>[], else: Stmt<A>[] }
   | { a?: A, tag: "while", cond: Expr<A>, loop: Stmt<A>[] }
   | { a?: A, tag: "pass" }
@@ -32,14 +30,22 @@ export type Stmt<A> =
   | { a?: A, tag: "funcDef" }
   | { a?: A, tag: "classDef" }
 
+// | { a?: A, tag: "assign", obj?: Expr<A>, name: string, value: Expr<A> }
+// | { a?: A, tag: "memberAssign", obj: Expr<A>, name: string, value: Expr<A> }
+
 export type Expr<A> =
   | { a?: A, tag: "literal", value: Literal<A> }
-  | { a?: A, tag: "id", obj?: Expr<A>, name: string }
-  // | { a?: A, tag: "member", obj: Expr<A>, name: string }
+  | { a?: A, tag: "id", obj: Expr<A>, name: string }
   | { a?: A, tag: "uniexpr", op: UniOp, expr: Expr<A> }
   | { a?: A, tag: "binexpr", op: BinOp, lhs: Expr<A>, rhs: Expr<A> }
-  | { a?: A, tag: "call", func: Expr<A>, args: Expr<A>[] }
+  // func.obj should be either "id" or "call" when parsing
+  // func.obj should be either "id" or "call" or "constructor" when tc
+  | { a?: A, tag: "call", obj: Expr<A>, name: string, args: Expr<A>[] }
+  | { a?: A, tag: "constructor", name: string, args: Expr<A>[]}
+
+// | { a?: A, tag: "call", func: Expr<A>, args: Expr<A>[]}
 // | { a?: A, tag: "call", obj?: Expr<A>, name: string, args: Expr<A>[] }
+// | { a?: A, tag: "member", obj: Expr<A>, name: string }
 // | { a?: A, tag: "memberCall", obj: Expr<A>, name: string, args: Expr<A>[] }
 // | { a?: A, tag: "builtin1", name: builtin1, arg: Expr<A> }
 // | { a?: A, tag: "builtin2", name: builtin2, arg1: Expr<A>, arg2: Expr<A> }

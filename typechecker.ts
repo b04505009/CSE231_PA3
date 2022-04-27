@@ -94,7 +94,7 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
     classdef.body.varinits.forEach(varinit => {
       checkDuplicateID(varinit.name, [globalEnv.class.get(classdef.name).var]);
       globalEnv.class.get(classdef.name).var.set(varinit.name, varinit.type);
-    } );
+    });
 
     // Add funcdefs to globalEnv.class[classdef.name].func
     classdef.body.funcdefs.forEach(funcdef => {
@@ -158,8 +158,8 @@ export function typeCheckClassDef(classdef: ClassDef<null>): ClassDef<Type> {
   methodDefs.forEach(funcdef => {
     typedClass.funcdefs.push(typeCheckFuncDef(funcdef, globalEnv));
   });
-  
-  return { ...classdef, body: typedClass};
+
+  return { ...classdef, body: typedClass };
 }
 
 export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalEnv: TypeEnv): Stmt<Type>[] {
@@ -181,17 +181,28 @@ export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalE
         if (stmt.target.tag !== "id") {
           throw new Error(`TypeError: Invalid target for assignment: ${stmt.target}`);
         }
-        if (!refEnv.var.has(stmt.target.name)) {
-          throw new Error("ReferenceError: Undefined variable: " + stmt.target.name);
+        const typedObj = typeCheckExpr(stmt.target.obj, refEnv);
+        // Normal variable assignment
+        if (typedObj === null) {
+          if (!refEnv.var.has(stmt.target.name)) {
+            throw new Error("ReferenceError: Undefined variable: " + stmt.target.name);
+          }
+          if (!localEnv.var.has(stmt.target.name)) {
+            throw new Error("ReferenceError: Cannot assign to non-local variable " + stmt.target.name);
+          }
+          const typedValue = typeCheckExpr(stmt.value, refEnv);
+          if (!isEqualType(typedValue.a, refEnv.var.get(stmt.target.name))) {
+            throw new Error(`TypeError: Cannot assign value of type ${typedValue.a.name} to variable ${stmt.target.name} of type ${refEnv.var.get(stmt.target.name).name}`);
+          }
+          typedStmts.push({ ...stmt, a: { tag: "object", name: "None" } });
+          break;
         }
-        if (!localEnv.var.has(stmt.target.name)) {
-          throw new Error("ReferenceError: Cannot assign to non-local variable " + stmt.target.name);
+        // Class member assignment
+        if (typedObj.a.tag !== "object") {
+          throw new Error(`TypeError: Cannot do member assignment to non-object ${typedObj.a.name}`);
         }
-        const typedValue = typeCheckExpr(stmt.value, refEnv);
-        if (!isEqualType(typedValue.a, refEnv.var.get(stmt.target.name))) {
-          throw new Error(`TypeError: Cannot assign value of type ${typedValue.a.name} to variable ${stmt.target.name} of type ${refEnv.var.get(stmt.target.name).name}`);
-        }
-        typedStmts.push({ ...stmt, a: { tag: "object", name: "None" } });
+        // Here
+
         break;
       case "return":
         const typedRet = typeCheckExpr(stmt.ret, refEnv);
@@ -234,8 +245,18 @@ export function typeCheckVarInits(inits: VarInit<null>[]): VarInit<Type>[] {
   const typedInits: VarInit<Type>[] = [];
   inits.forEach(init => {
     const typedInit = typeCheckLiteral(init.init);
-    if (!isEqualType(typedInit.a, init.type)) {
-      throw new Error("Type error: Init type " + init.type.name + " does not match type " + typedInit.a.name);
+    if (typedInit.a.tag != init.type.tag) {
+      throw new Error(`TypeError: Cannot initialize variable ${init.name} of type ${init.type.name} with value of type ${typedInit.a.name}`);
+    }
+    if (typedInit.a.tag === "primitive") {
+      if (!isEqualType(typedInit.a, init.type)) {
+        throw new Error("TypeError: Cannot initialize variable " + init.name + " of type " + init.type.name + " with value of type " + typedInit.a.name);
+      }
+    }
+    else if (typedInit.a.tag === "object") {
+      if (typedInit.a.name !== "None") {
+        throw new Error("TypeError: Object could only be initialized with None:" + typedInit.a.name);
+      }
     }
     typedInits.push({ ...init, a: init.type, init: typedInit });
   });
@@ -338,6 +359,9 @@ export function typeCheckMethodDef(def: FuncDef<null>, classEnv: TypeEnv, nonLoc
 export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
 
   // console.log("typeCheckExpr: ", expr)
+  if (expr === null) {
+    return null;
+  }
 
   switch (expr.tag) {
     case "literal":
@@ -437,98 +461,58 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
           throw new Error("TypeError: Unknown operator " + expr.op);
       }
     case "call":
-      if (expr.func.tag !== "id") {
-        throw new Error("TypeError: Function name must be an identifier");
-      }
       const typedArgs = expr.args.map(arg => typeCheckExpr(arg, refEnv));
       const typedArgsType = typedArgs.map(arg => arg.a);
-      if (expr.func.obj === undefined || expr.func.obj === null) {
-        const funcName = funcNameMangling(expr.func.name, "", typedArgsType)
+      // Constructor or Normal function
+      // ex. A()
+      // ex. a()
+      if (expr.obj === null) {
+        // Constructor
+        if (refEnv.class.has(expr.name)) {
+          // TODO: check the number of arguments for constructor
+          return {
+            a: { tag: "object", name: expr.name },
+            tag: "constructor",
+            args: typedArgs,
+            name: expr.name
+          }
+        }
+        // Normal function call
+        const funcName = funcNameMangling(expr.name, "", typedArgsType)
         if (!refEnv.func.has(funcName)) {
           throw new Error(`ReferenceError: Undefined function ${funcName}`);
         }
         return {
           ...expr,
           a: refEnv.func.get(funcName)[1],
-          func: { tag: "id", name: funcName },
           args: typedArgs
-        }
+        };
       }
+      // Method call
+      // ex. A.b()
+      // ex. (A.a()).b()
       else {
-        if (expr.func.obj.tag !== "id") {
-          throw new Error("TypeError: object calling function must be an identifier");
+        const typedObj = typeCheckExpr(expr.obj, refEnv);
+        if (typedObj.a.tag !== "object") {
+          throw new Error("TypeError: Cannot call method on non-object: " + typedObj.a.name);
         }
-        const funcName = funcNameMangling(expr.func.name, expr.func.obj.name, typedArgsType)
+        const funcName = funcNameMangling(expr.name, typedObj.a.name, typedArgsType)
         if (!refEnv.func.has(funcName)) {
           throw new Error(`ReferenceError: Undefined function ${funcName}`);
         }
         return {
           ...expr,
           a: refEnv.func.get(funcName)[1],
-          func: { tag: "id", name: funcName },
+          obj: typedObj,
           args: typedArgs
         }
       }
-    // Check if function has correct number of arguments
     // const funcType = refEnv.func.get(funcName);
-    // if (funcType[0].length !== expr.args.length) {
-    //   throw new Error(`TypeError: Function ${funcName} expects ${funcType[0].length} arguments, but ${expr.args.length} given`);
-    // }
-    // Check if arguments are of correct type
-    // const typedArgs = expr.args.map(arg => typeCheckExpr(arg, refEnv));
-    // const typedArgsType = typedArgs.map(arg => arg.a);
     // typedArgsType.forEach((argType, i) => {
     //   if (!isEqualType(funcType[0][i], argType)) {
     //     throw new Error(`TypeError: Function ${funcName} expects argument ${i} to be ${funcType[0][i]}, but ${argType} given`);
     //   }
     // });
-    // return {
-    //   ...expr,
-    //   a: funcType[1],
-    //   args: typedArgs
-    // };
-    // case "builtin1":
-    //   const typedArg = typeCheckExpr(expr.arg, refEnv);
-    //   switch (expr.name) {
-    //     case "print":
-    //       // if (!isType(typedArg.a)) {
-    //       //   throw new Error("TypeError: Cannot apply builtin1 function " + expr.name + " to type " + typedArg.a);
-    //       // }
-    //       return {
-    //         ...expr,
-    //         a: typedArg.a,
-    //         arg: typedArg
-    //       };
-    //     case "abs":
-    //       if (!isEqualPrimitiveType(typedArg.a, "Int")) {
-    //         throw new Error("TypeError: Cannot apply builtin1 function " + expr.name + " to type " + typedArg.a);
-    //       }
-    //       return {
-    //         ...expr,
-    //         a: { tag: "primitive", name: "Int" },
-    //         arg: typedArg
-    //       };
-    //   }
-    //   throw new Error("TypeError: Unknown builtin1 function " + expr.name);
-    // case "builtin2":
-    //   const typedArg1 = typeCheckExpr(expr.arg1, refEnv);
-    //   const typedArg2 = typeCheckExpr(expr.arg2, refEnv);
-    //   switch (expr.name) {
-    //     case "min":
-    //     case "max":
-    //     case "pow":
-    //       if (!isEqualPrimitiveType(typedArg1.a, "Int") || !isEqualPrimitiveType(typedArg2.a, "Int")) {
-    //         throw new Error("TypeError: Cannot apply builtin2 function " + expr.name + " to type " + typedArg1.a + " and " + typedArg2.a);
-    //       }
-    //       return {
-    //         ...expr,
-    //         a: { tag: "primitive", name: "Int" },
-    //         arg1: typedArg1,
-    //         arg2: typedArg2
-    //       };
-    //     default:
-    //       throw new Error("TypeError: Unknown builtin2 function " + expr.name);
-    //   }
     default:
       // @ts-ignore
       throw new Error("TypeError: Unknown expression " + expr.tag);

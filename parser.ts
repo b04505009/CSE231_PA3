@@ -132,7 +132,8 @@ export function traverseExpr(c: TreeCursor, s: string): Expr<null> {
       var name = s.substring(c.from, c.to);
       return {
         tag: "id",
-        name: name
+        name: name,
+        obj: null
       }
     // operators
     case "UnaryExpression":
@@ -172,27 +173,17 @@ export function traverseExpr(c: TreeCursor, s: string): Expr<null> {
     case "CallExpression":
       c.firstChild(); // Expr
       var func = traverseExpr(c, s);
+      if (func.tag !== "id" && func.tag != "call") {
+        throw new Error("ParseError: Cannot make a function call with " + func.tag);
+      }
       c.nextSibling(); // ArgList
       var args = traverseArgs(c, s);
       c.parent();
-      // TODO: generalize builtin functions
-      // if (isBuiltin1(name)) {
-      //   if (args.length != 1) {
-      //     throw new Error("ParseError: Builtin function " + name + " takes 1 argument");
-      //   }
-      //   return {
-      //     tag: "builtin1", name, arg: args[0]
-      //   }
-      // } else if (isBuiltin2(name)) {
-      //   if (args.length != 2) {
-      //     throw new Error("ParseError: Builtin function " + name + " takes 2 arguments");
-      //   }
-      //   return {
-      //     tag: "builtin2", name, arg1: args[0], arg2: args[1]
-      //   }
-      // }
       return {
-        tag: "call", func, args
+        tag: "call", 
+        obj : func.obj,
+        name: func.name,
+        args
       }
     case "MemberExpression":
       c.firstChild(); // VariableName or expr
@@ -272,6 +263,7 @@ export function traverseStmt(c: TreeCursor, s: string): Stmt<null> {
           tag: "assign",
           target: {
             tag: "id",
+            obj: null,
             name
           },
           value
