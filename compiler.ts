@@ -8,6 +8,8 @@ type CompileResult = {
   wasmSource: string,
 };
 
+const objStartTable = new Map<string, number>();
+
 export function compile(prog: Body<Type>): CompileResult {
 
   // console.log("compile: ", prog);
@@ -41,6 +43,8 @@ export function compile(prog: Body<Type>): CompileResult {
       (func $max (import "imports" "max") (param i32) (param i32) (result i32))
       (func $min (import "imports" "min") (param i32) (param i32) (result i32))
       (func $pow (import "imports" "pow") (param i32) (param i32) (result i32))
+      (global $$none (mut i32) (i32.const 0))
+      (global $$heap (mut i32) (i32.const 4))
       ${varsCode}
       ${funcsCode}
       (func (export "_start") ${retType}
@@ -77,11 +81,15 @@ export function codeGenStmt(stmt: Stmt<Type>, localEnv: LocalEnv): Array<string>
       if (stmt.target.tag !== "id") {
         throw new Error("codeGenStmt: assign: target is not an id");
       }
-      var valExpr = codeGenExpr(stmt.value, localEnv);
-      if (localEnv.get(stmt.target.name)) {
-        return valExpr.concat([`(local.set $${stmt.target.name})`]);
+      if (stmt.target.obj === null) {
+        var valExpr = codeGenExpr(stmt.value, localEnv);
+        if (localEnv.get(stmt.target.name)) {
+          return valExpr.concat([`(local.set $${stmt.target.name})`]);
+        }
+        return valExpr.concat([`(global.set $${stmt.target.name})`]);
       }
-      return valExpr.concat([`(global.set $${stmt.target.name})`]);
+
+
     case "if":
       const condExpr_if = codeGenExpr(stmt.cond, localEnv);
       const thenStmts = stmt.then.map(s => codeGenStmt(s, localEnv)).flat();

@@ -2,9 +2,9 @@ import { Body, Type, Expr, Stmt, Literal, BinOp, VarInit, FuncDef, NoneType, Cla
 
 type TypeEnv = {
   var?: Map<string, Type>;
+  // TODO: check if we need func after we have mangledFunc
   func?: Map<string, [Type[], Type]>;
-  // Todo: Add return type
-  mangledFuncs?: Set<string>;
+  mangledFuncs?: Map<string, Type>;
   class?: Map<string, TypeEnv>;
   ret?: Type;
 }
@@ -28,26 +28,18 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
   const globalEnv: TypeEnv = {
     var: new Map(),
     func: new Map(),
-    mangledFuncs: new Set(),
+    mangledFuncs: new Map(),
     class: new Map(),
   }
-  globalEnv.func.set("$$print$$int",
-    [
-      [{ tag: "primitive", name: "int" }],
-      { tag: "object", name: "None" }
-    ]
+
+  globalEnv.mangledFuncs.set("$$print$$int",
+    { tag: "object", name: "None" }
   );
-  globalEnv.func.set("$$print$$bool",
-    [
-      [{ tag: "primitive", name: "bool" }],
-      { tag: "object", name: "None" }
-    ]
+  globalEnv.mangledFuncs.set("$$print$$bool",
+    { tag: "object", name: "None" }
   );
-  globalEnv.func.set("$$print$$none",
-    [
-      [{ tag: "object", name: "None" }],
-      { tag: "object", name: "None" }
-    ]
+  globalEnv.mangledFuncs.set("$$print$$none",
+    { tag: "object", name: "None" }
   );
 
   const typedProg: Body<Type> = {
@@ -77,7 +69,8 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
     // mangled funcname cannot duplicate with each other
     const mangledName = funcNameMangling(funcdef.name, "", funcdef.params.map(p => p.type));
     checkDuplicateID(mangledName, [globalEnv.mangledFuncs]);
-    globalEnv.mangledFuncs.add(mangledName);
+    globalEnv.mangledFuncs.set(mangledName, funcdef.ret);
+
   });
 
   // Check classdefs
@@ -113,7 +106,7 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
       // mangled funcname cannot duplicate with each other
       const mangledName = funcNameMangling(funcdef.name, classdef.name, funcdef.params.map(p => p.type));
       checkDuplicateID(mangledName, [globalEnv.mangledFuncs]);
-      globalEnv.mangledFuncs.add(mangledName);
+      globalEnv.mangledFuncs.set(mangledName, funcdef.ret);
     });
   })
 
@@ -137,6 +130,7 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
     var: new Map(),
     func: new Map(),
     class: new Map(),
+    mangledFuncs: new Map(),
   });
   typedProg.a = { tag: "object", name: "None" }
   if (typedProg.stmts.length > 0) {
@@ -174,7 +168,7 @@ export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalE
     var: new Map([...nonLocalEnv.var, ...localEnv.var]),
     func: new Map([...nonLocalEnv.func, ...localEnv.func]),
     class: new Map([...nonLocalEnv.class, ...localEnv.class]),
-    mangledFuncs: new Set([...nonLocalEnv.mangledFuncs, ...localEnv.mangledFuncs]),
+    mangledFuncs: new Map([...nonLocalEnv.mangledFuncs, ...localEnv.mangledFuncs]),
     ret: localEnv.ret,
   }
 
@@ -298,7 +292,7 @@ export function typeCheckFuncDef(def: FuncDef<null>, nonLocalEnv: TypeEnv): Func
     var: new Map(),
     func: new Map(),
     class: new Map(),
-    mangledFuncs: new Set(),
+    mangledFuncs: new Map(),
   };
   const typedParams = def.params.map(param => ({ ...param, a: param.type }))
   // Add parameters to local env
@@ -408,7 +402,7 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
       }
       return {
         ...expr,
-        a: refEnv.var.get(expr.name),
+        a: refEnv.class.get(typedObj.a.name).var.get(expr.name),
         obj: typedObj
       };
     case "uniexpr":
@@ -503,12 +497,12 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
         }
         // Normal function call
         const funcName = funcNameMangling(expr.name, "", typedArgsType)
-        if (!refEnv.func.has(funcName)) {
+        if (!refEnv.mangledFuncs.has(funcName)) {
           throw new Error(`ReferenceError: Undefined function ${funcName}`);
         }
         return {
           ...expr,
-          a: refEnv.func.get(funcName)[1],
+          a: refEnv.mangledFuncs.get(funcName),
           args: typedArgs
         };
       }
@@ -529,7 +523,7 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
         }
         return {
           ...expr,
-          a: refEnv.func.get(funcName)[1],
+          a: refEnv.mangledFuncs.get(funcName),
           obj: typedObj,
           args: typedArgs
         }
