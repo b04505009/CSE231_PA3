@@ -180,8 +180,8 @@ export function traverseExpr(c: TreeCursor, s: string): Expr<null> {
       var args = traverseArgs(c, s);
       c.parent();
       return {
-        tag: "call", 
-        obj : func.obj,
+        tag: "call",
+        obj: func.obj,
         name: func.name,
         args
       }

@@ -3,17 +3,13 @@ import { Body, Type, Expr, Stmt, Literal, BinOp, VarInit, FuncDef, NoneType, Cla
 type TypeEnv = {
   var?: Map<string, Type>;
   func?: Map<string, [Type[], Type]>;
+  // Todo: Add return type
   mangledFuncs?: Set<string>;
   class?: Map<string, TypeEnv>;
   ret?: Type;
 }
 
-const globalEnv: TypeEnv = {
-  var: new Map(),
-  func: new Map(),
-  mangledFuncs: new Set(),
-  class: new Map(),
-}
+
 
 export function funcNameMangling(name: string, objName: string, args: Type[]): string {
   return objName + "$$" + name + "$$" + args.map(t => t.name.toString()).join("$");
@@ -28,6 +24,13 @@ export function checkDuplicateID(name: string, mapList: (Map<string, any> | Set<
 }
 
 export function typeCheckProgram(prog: Body<null>): Body<Type> {
+
+  const globalEnv: TypeEnv = {
+    var: new Map(),
+    func: new Map(),
+    mangledFuncs: new Set(),
+    class: new Map(),
+  }
   globalEnv.func.set("$$print$$int",
     [
       [{ tag: "primitive", name: "int" }],
@@ -86,6 +89,7 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
     globalEnv.class.set(classdef.name, {
       var: new Map(),
       func: new Map(),
+      class: new Map(),
     });
 
     // TODO: For class in class, we have to add all the members and methods of all the subclasses recursively
@@ -113,6 +117,8 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
     });
   })
 
+  console.log("globalEnv:", globalEnv)
+
   // Check varinits
   typedProg.varinits = typeCheckVarInits(prog.varinits);
   // Check funcdefs
@@ -121,7 +127,7 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
   });
   // Check classdefs
   prog.classdefs.forEach(classdef => {
-    typedProg.classdefs.push(typeCheckClassDef(classdef));
+    typedProg.classdefs.push(typeCheckClassDef(classdef, globalEnv));
   });
 
   if (checkReturn(prog.stmts)) {
@@ -140,7 +146,7 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
 }
 
 // method names are already mangled
-export function typeCheckClassDef(classdef: ClassDef<null>): ClassDef<Type> {
+export function typeCheckClassDef(classdef: ClassDef<null>, globalEnv: TypeEnv): ClassDef<Type> {
 
   if (classdef.super !== "object") {
     throw new Error("TypeError: Superclass must be object for now.");
@@ -155,8 +161,8 @@ export function typeCheckClassDef(classdef: ClassDef<null>): ClassDef<Type> {
   // Check varinits
   typedClass.varinits = typeCheckVarInits(memberInits);
   // Check funcdefs
-  methodDefs.forEach(funcdef => {
-    typedClass.funcdefs.push(typeCheckFuncDef(funcdef, globalEnv));
+  methodDefs.forEach(methoddef => {
+    typedClass.funcdefs.push(typeCheckFuncDef(methoddef, globalEnv));
   });
 
   return { ...classdef, body: typedClass };
@@ -168,6 +174,7 @@ export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalE
     var: new Map([...nonLocalEnv.var, ...localEnv.var]),
     func: new Map([...nonLocalEnv.func, ...localEnv.func]),
     class: new Map([...nonLocalEnv.class, ...localEnv.class]),
+    mangledFuncs: new Set([...nonLocalEnv.mangledFuncs, ...localEnv.mangledFuncs]),
     ret: localEnv.ret,
   }
 
@@ -199,10 +206,13 @@ export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalE
         }
         // Class member assignment
         if (typedObj.a.tag !== "object") {
-          throw new Error(`TypeError: Cannot do member assignment to non-object ${typedObj.a.name}`);
+          throw new Error(`TypeError: Cannot do member assignment to non-object: ${typedObj.a.name}`);
         }
-        // Here
-
+        const typedValue = typeCheckExpr(stmt.value, refEnv);
+        if (!isEqualType(refEnv.class.get(typedObj.a.name).var.get(stmt.target.name), typedValue.a)) {
+          throw new Error(`TypeError: Cannot assign value of type ${typedValue.a.name} to member ${stmt.target.name} of type ${refEnv.class.get(typedObj.a.name).var.get(stmt.target.name).name}`);
+        }
+        typedStmts.push({ ...stmt, a: { tag: "object", name: "None" } });
         break;
       case "return":
         const typedRet = typeCheckExpr(stmt.ret, refEnv);
@@ -286,6 +296,9 @@ export function checkReturn(stmts: Stmt<Type>[]): boolean {
 export function typeCheckFuncDef(def: FuncDef<null>, nonLocalEnv: TypeEnv): FuncDef<Type> {
   const localEnv: TypeEnv = {
     var: new Map(),
+    func: new Map(),
+    class: new Map(),
+    mangledFuncs: new Set(),
   };
   const typedParams = def.params.map(param => ({ ...param, a: param.type }))
   // Add parameters to local env
@@ -322,6 +335,8 @@ export function typeCheckFuncDef(def: FuncDef<null>, nonLocalEnv: TypeEnv): Func
 export function typeCheckMethodDef(def: FuncDef<null>, classEnv: TypeEnv, nonLocalEnv: TypeEnv): FuncDef<Type> {
   const localEnv: TypeEnv = {
     var: new Map(),
+    func: new Map(),
+    class: new Map(),
   };
   const typedParams = def.params.map(param => ({ ...param, a: param.type }))
   // Add parameters to local env
@@ -359,10 +374,10 @@ export function typeCheckMethodDef(def: FuncDef<null>, classEnv: TypeEnv, nonLoc
 export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
 
   // console.log("typeCheckExpr: ", expr)
+
   if (expr === null) {
     return null;
   }
-
   switch (expr.tag) {
     case "literal":
       const lit = typeCheckLiteral(expr.value);
@@ -371,22 +386,31 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
         a: lit.a
       };
     case "id":
-      if (!refEnv.var.has(expr.name) && !refEnv.func.has(expr.name)) {
-        throw new Error(`ReferenceError: Undefined variable ${expr.name}`);
-      }
-      if (refEnv.var.has(expr.name)) {
+      // Normal variable
+      if (expr.obj === null) {
+        if (!refEnv.var.has(expr.name)) {
+          throw new Error(`ReferenceError: Undefined variable ${expr.name}`);
+        }
         return {
           ...expr,
           a: refEnv.var.get(expr.name)
         };
       }
-      if (refEnv.func.has(expr.name)) {
-        return {
-          ...expr,
-          a: refEnv.func.get(expr.name)[1]
-        };
+      // Member variable
+      const typedObj = typeCheckExpr(expr.obj, refEnv);
+      // check if obj class is defined
+      if (!refEnv.class.has(typedObj.a.name)) {
+        throw new Error(`TypeError: Cannot access property of non-class: ${typedObj.a.name}`);
       }
-      throw new Error(`ReferenceError: Redefined variable ${expr.name}`);
+      // check if obj class has member variable
+      if (!refEnv.class.get(typedObj.a.name).var.has(expr.name)) {
+        throw new Error(`TypeError: Class ${typedObj.a.name} has no property ${expr.name}`);
+      }
+      return {
+        ...expr,
+        a: refEnv.var.get(expr.name),
+        obj: typedObj
+      };
     case "uniexpr":
       const typedUniExpr = typeCheckExpr(expr.expr, refEnv);
       return {
@@ -496,8 +520,11 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
         if (typedObj.a.tag !== "object") {
           throw new Error("TypeError: Cannot call method on non-object: " + typedObj.a.name);
         }
+        // Add self as first argument
+        typedArgsType.unshift(typedObj.a);
+
         const funcName = funcNameMangling(expr.name, typedObj.a.name, typedArgsType)
-        if (!refEnv.func.has(funcName)) {
+        if (!refEnv.mangledFuncs.has(funcName)) {
           throw new Error(`ReferenceError: Undefined function ${funcName}`);
         }
         return {

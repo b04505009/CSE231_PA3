@@ -41,7 +41,7 @@ export type Expr<A> =
   // func.obj should be either "id" or "call" when parsing
   // func.obj should be either "id" or "call" or "constructor" when tc
   | { a?: A, tag: "call", obj: Expr<A>, name: string, args: Expr<A>[] }
-  | { a?: A, tag: "constructor", name: string, args: Expr<A>[]}
+  | { a?: A, tag: "constructor", name: string, args: Expr<A>[] }
 
 // | { a?: A, tag: "call", func: Expr<A>, args: Expr<A>[]}
 // | { a?: A, tag: "call", obj?: Expr<A>, name: string, args: Expr<A>[] }
@@ -95,6 +95,9 @@ export type Type =
 export type NoneType = { tag: "object", name: "None" };
 
 export function isEqualType(type1: Type, type2: Type): boolean {
+  if (type1 === null || type2 === null) {
+    return false;
+  }
   return type1.tag === type2.tag && type1.name === type2.name;
 }
 
