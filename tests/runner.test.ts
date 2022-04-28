@@ -231,7 +231,7 @@ f(x)
     catch (e) {
       err = e.message;
     }
-    expect(err).to.equal("TypeError: Cannot return value of type None from function with return type int");
+    expect(err).to.equal("TYPE ERROR: Cannot return value of type None from function with return type int");
   });
 
   it('test 12', async () => {
@@ -248,7 +248,7 @@ x = f(x)
     catch (e) {
       err = e.message;
     }
-    expect(err).to.equal("TypeError: Cannot assign value of type bool to variable x of type int");
+    expect(err).to.equal("TYPE ERROR: Cannot assign value of type bool to variable x of type int");
   });
 
   it('test 13', async () => {
@@ -265,7 +265,7 @@ x = f(x)
     catch (e) {
       err = e.message;
     }
-    expect(err).to.equal("TypeError: Cannot assign value of type None to variable x of type int");
+    expect(err).to.equal("TYPE ERROR: Cannot assign value of type None to variable x of type int");
   });
 
   it('test 14', async () => {
@@ -309,7 +309,7 @@ def f(x:int)->int:
     catch (e) {
       err = e.message;
     }
-    expect(err).to.equal("TypeError: All paths in this method / function must have a return value: $$f$$int");
+    expect(err).to.equal("TYPE ERROR: All paths in this method / function must have a return value: $$f$$int");
   });
 
   it('test 17', async () => {
@@ -331,7 +331,7 @@ def f(x:int)->int:
     catch (e) {
       err = e.message;
     }
-    expect(err).to.equal("TypeError: All paths in this method / function must have a return value: $$f$$int");
+    expect(err).to.equal("TYPE ERROR: All paths in this method / function must have a return value: $$f$$int");
   });
 
   it('test 18', async () => {

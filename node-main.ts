@@ -33,11 +33,7 @@ const importObject = {
 // command to run:
 // node node-main.js 987
 const input = process.argv[2];
-const parsed_prog = parse(input);
-const typed_prog = typeCheckProgram(parsed_prog);
-const result = compile(typed_prog);
-console.log(result.wasmSource);
-run(result.wasmSource, importObject).then((value) => {
+run(input, {importObject}).then((value) => {
   console.log(value);
 });
 

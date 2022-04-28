@@ -10,8 +10,6 @@ type CompileResult = {
 
 const classMemberTable = new Map<string, VarInit<Type>[]>();
 
-var heapSize = 4;
-
 export function compile(prog: Body<Type>): CompileResult {
 
   console.log("compile: ", prog);
@@ -27,7 +25,7 @@ export function compile(prog: Body<Type>): CompileResult {
   const MethodsCode = prog.classdefs.map(c => c.body.funcdefs.map(f => codeGenFunc(f, emptyEnv)).map(s => s.join("\n")).join("\n\n")).join("\n\n");
   const stmtsCode = prog.stmts.map(s => codeGenStmt(s, emptyEnv)).flat();
 
-  const mainCode = [`(local $scratch i32)`, ...stmtsCode].join(
+  const mainCode = [`(local $$scratch i32)`, ...stmtsCode].join(
     `
         `);
 
@@ -37,7 +35,7 @@ export function compile(prog: Body<Type>): CompileResult {
   if (prog.stmts.length > 0 && prog.stmts[prog.stmts.length - 1].tag === "expr") {
     // return the last expression
     retType = "(result i32)";
-    retVal = "(local.get $scratch)"
+    retVal = "(local.get $$scratch)"
   }
 
   return {
@@ -78,7 +76,7 @@ export function codeGenFunc(func: FuncDef<any>, localEnv_: LocalEnv): Array<stri
   const body = func.body.stmts.map(s => codeGenStmt(s, localEnv)).map(s => s.join("\n")).join("\n");
   return [
     `(func $${func.name} ${params} (result i32)
-       (local $scratch i32)
+       (local $$scratch i32)
        ${varinits}
        ${body}
        (i32.const 0)
@@ -107,14 +105,15 @@ export function codeGenStmt(stmt: Stmt<Type>, localEnv: LocalEnv): Array<string>
       const offset = classMemberTable.get(obj.a.name).findIndex(m => m.name === name);
       return [
         ...objExpr,
+        `local.tee $$scratch`,
         `(if 
             (then) 
             (else 
               (i32.const 0)
               call $runtimeError
-              (i32.const 0)
             ) 
           )`,
+        `(local.get $$scratch)`,
         `(i32.const ${offset * 4})`,
         `(i32.add)`,
         ...valExpr,
@@ -156,7 +155,7 @@ export function codeGenStmt(stmt: Stmt<Type>, localEnv: LocalEnv): Array<string>
       return retExpr;
     case "expr":
       const result = codeGenExpr(stmt.expr, localEnv);
-      result.push("(local.set $scratch)");
+      result.push("(local.set $$scratch)");
       return result;
   }
   return Array<string>();
@@ -181,6 +180,15 @@ function codeGenExpr(expr: Expr<Type>, localEnv: LocalEnv): Array<string> {
       const offset = classMemberTable.get(expr.obj.a.name).findIndex(m => m.name === expr.name);
       return [
         ...objCode,
+        `local.tee $$scratch`,
+        `(if 
+            (then) 
+            (else 
+              (i32.const 0)
+              call $runtimeError
+            ) 
+          )`,
+        `(local.get $$scratch)`,
         `(i32.const ${offset * 4})`,
         `(i32.add)`,
         `(i32.load)`
@@ -212,13 +220,6 @@ function codeGenExpr(expr: Expr<Type>, localEnv: LocalEnv): Array<string> {
       }
     case "constructor":
       // TODO: Deal with the args.
-      // const constructorCode = Array<string>();
-      // classMemberTable.get(expr.name).forEach(varinit => {
-      //   constructorCode.push(`(global.get $$heap)`);
-      //   constructorCode.push(codeGenLiteral(varinit.init));
-      //   constructorCode.push(`(i32.store)`);
-      //   heapSize += 4;
-      // });
       let initvals = Array<string>();
       classMemberTable.get(expr.name).forEach((varinit, i) => {
         initvals = [
@@ -255,7 +256,7 @@ function codeGenUniOp(op: UniOp): string {
     case UniOp.Neg:
       return "(i32.sub)";
     case UniOp.Not:
-      return "(i32.eqz)";
+      return "(i32.eq)";
   }
 }
 

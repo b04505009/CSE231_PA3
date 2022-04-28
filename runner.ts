@@ -37,7 +37,7 @@ export async function run(chocoPyCode: string, config: any): Promise<number> {
       runtimeError: () => {
         importObject.output += "RUNTIME ERROR: Operation on None";
         importObject.output += "\n";
-        throw new Error("runtimeError");
+        throw new Error("RUNTIME ERROR: Operation on None");
       },
     },
     js: {

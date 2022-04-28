@@ -1,4 +1,4 @@
-import { Body, Type, Expr, Stmt, Literal, BinOp, VarInit, FuncDef, NoneType, ClassDef, isEqualType, isEqualPrimitiveType, funcNameMangling } from "./ast";
+import { Body, Type, Expr, Stmt, Literal, BinOp, VarInit, FuncDef, NoneType, ClassDef, isEqualType, isEqualPrimitiveType, funcNameMangling, isAssignable } from "./ast";
 
 type TypeEnv = {
   var?: Map<string, Type>;
@@ -121,7 +121,7 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
   });
 
   if (checkReturn(prog.stmts)) {
-    throw new Error("TypeError: Return Statement cannot appear at the top level");
+    throw new Error("TYPE ERROR: Return Statement cannot appear at the top level");
   }
   typedProg.stmts = typeCheckStmts(prog.stmts, globalEnv, {
     var: new Map(),
@@ -140,7 +140,7 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
 export function typeCheckClassDef(classdef: ClassDef<null>, globalEnv: TypeEnv): ClassDef<Type> {
 
   if (classdef.super !== "object") {
-    throw new Error("TypeError: Superclass must be object for now.");
+    throw new Error("TYPE ERROR: Superclass must be object for now.");
   }
   const memberInits: VarInit<null>[] = classdef.body.varinits;
   const methodDefs: FuncDef<null>[] = classdef.body.funcdefs;
@@ -177,7 +177,7 @@ export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalE
     switch (stmt.tag) {
       case "assign":
         if (stmt.target.tag !== "id") {
-          throw new Error(`TypeError: Invalid target for assignment: ${stmt.target}`);
+          throw new Error(`TYPE ERROR: Invalid target for assignment: ${stmt.target}`);
         }
         const typedObj = typeCheckExpr(stmt.target.obj, refEnv);
         // Normal variable assignment
@@ -189,8 +189,8 @@ export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalE
             throw new Error("ReferenceError: Cannot assign to non-local variable " + stmt.target.name);
           }
           const typedValue = typeCheckExpr(stmt.value, refEnv);
-          if (!isEqualType(typedValue.a, refEnv.var.get(stmt.target.name))) {
-            throw new Error(`TypeError: Cannot assign value of type ${typedValue.a.name} to variable ${stmt.target.name} of type ${refEnv.var.get(stmt.target.name).name}`);
+          if (!isAssignable(typedValue.a, refEnv.var.get(stmt.target.name))) {
+            throw new Error(`TYPE ERROR: Cannot assign value of type ${typedValue.a.name} to variable ${stmt.target.name} of type ${refEnv.var.get(stmt.target.name).name}`);
           }
           typedStmts.push({
             ...stmt,
@@ -202,11 +202,11 @@ export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalE
         }
         // Class member assignment
         if (typedObj.a.tag !== "object") {
-          throw new Error(`TypeError: Cannot do member assignment to non-object: ${typedObj.a.name}`);
+          throw new Error(`TYPE ERROR: Cannot do member assignment to non-object: ${typedObj.a.name}`);
         }
         const typedValue = typeCheckExpr(stmt.value, refEnv);
-        if (!isEqualType(refEnv.class.get(typedObj.a.name).var.get(stmt.target.name), typedValue.a)) {
-          throw new Error(`TypeError: Cannot assign value of type ${typedValue.a.name} to member ${stmt.target.name} of type ${refEnv.class.get(typedObj.a.name).var.get(stmt.target.name).name}`);
+        if (!isAssignable(refEnv.class.get(typedObj.a.name).var.get(stmt.target.name), typedValue.a)) {
+          throw new Error(`TYPE ERROR: Cannot assign value of type ${typedValue.a.name} to member ${stmt.target.name} of type ${refEnv.class.get(typedObj.a.name).var.get(stmt.target.name).name}`);
         }
         typedStmts.push({
           ...stmt,
@@ -217,15 +217,15 @@ export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalE
         break;
       case "return":
         const typedRet = typeCheckExpr(stmt.ret, refEnv);
-        if (!isEqualType(typedRet.a, refEnv.ret)) {
-          throw new Error(`TypeError: Cannot return value of type ${typedRet.a.name} from function with return type ${refEnv.ret.name}`);
+        if (!isAssignable(typedRet.a, refEnv.ret)) {
+          throw new Error(`TYPE ERROR: Cannot return value of type ${typedRet.a.name} from function with return type ${refEnv.ret.name}`);
         }
         typedStmts.push({ ...stmt, a: { tag: "object", name: "None" }, ret: typedRet });
         return typedStmts;
       case "if":
         const typedCond_if = typeCheckExpr(stmt.cond, refEnv);
         if (!isEqualPrimitiveType(typedCond_if.a, "bool")) {
-          throw new Error(`TypeError: Cannot use value of type ${typedCond_if.a.name} as condition`);
+          throw new Error(`TYPE ERROR: Cannot use value of type ${typedCond_if.a.name} as condition`);
         }
         const typedThen = typeCheckStmts(stmt.then, localEnv, nonLocalEnv);
         const typedElse = typeCheckStmts(stmt.else, localEnv, nonLocalEnv);
@@ -234,7 +234,7 @@ export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalE
       case "while":
         const typedCond_while = typeCheckExpr(stmt.cond, refEnv);
         if (!isEqualPrimitiveType(typedCond_while.a, "bool")) {
-          throw new Error(`TypeError: Cannot use value of type ${typedCond_while.a} as condition`);
+          throw new Error(`TYPE ERROR: Cannot use value of type ${typedCond_while.a} as condition`);
         }
         const typedLoop = typeCheckStmts(stmt.loop, localEnv, nonLocalEnv);
         typedStmts.push({ ...stmt, a: { tag: "object", name: "None" }, cond: typedCond_while, loop: typedLoop });
@@ -257,17 +257,10 @@ export function typeCheckVarInits(inits: VarInit<null>[]): VarInit<Type>[] {
   inits.forEach(init => {
     const typedInit = typeCheckLiteral(init.init);
     if (typedInit.a.tag != init.type.tag) {
-      throw new Error(`TypeError: Cannot initialize variable ${init.name} of type ${init.type.name} with value of type ${typedInit.a.name}`);
+      throw new Error(`TYPE ERROR: Cannot initialize variable ${init.name} of type ${init.type.name} with value of type ${typedInit.a.name}`);
     }
-    if (typedInit.a.tag === "primitive") {
-      if (!isEqualType(typedInit.a, init.type)) {
-        throw new Error("TypeError: Cannot initialize variable " + init.name + " of type " + init.type.name + " with value of type " + typedInit.a.name);
-      }
-    }
-    else if (typedInit.a.tag === "object") {
-      if (typedInit.a.name !== "None") {
-        throw new Error("TypeError: Object could only be initialized with None:" + typedInit.a.name);
-      }
+    if (!isAssignable(typedInit.a, init.type)) {
+      throw new Error("TYPE ERROR: Cannot initialize variable " + init.name + " of type " + init.type.name + " with value of type " + typedInit.a.name);
     }
     typedInits.push({ ...init, a: init.type, init: typedInit });
   });
@@ -322,7 +315,7 @@ export function typeCheckFuncDef(def: FuncDef<null>, nonLocalEnv: TypeEnv): Func
 
   // If return type is not none, check if the function returns a value in all the paths
   if (!isEqualType(def.ret, { tag: "object", name: "None" }) && !checkReturn(typedStmts)) {
-    throw new Error("TypeError: All paths in this method / function must have a return value: " + def.name);
+    throw new Error("TYPE ERROR: All paths in this method / function must have a return value: " + def.name);
   }
   // If return type is none, add a return statement if there isn't one
   if (isEqualType(def.ret, { tag: "object", name: "None" }) && !checkReturn(typedStmts)) {
@@ -362,7 +355,7 @@ export function typeCheckMethodDef(def: FuncDef<null>, classEnv: TypeEnv, nonLoc
 
   // If return type is not none, check if the function returns a value in all the paths
   if (!isEqualType(def.ret, { tag: "object", name: "None" }) && !checkReturn(typedStmts)) {
-    throw new Error("TypeError: All paths in this method / function must have a return value: " + def.name);
+    throw new Error("TYPE ERROR: All paths in this method / function must have a return value: " + def.name);
   }
   // If return type is none, add a return statement if there isn't one
   if (isEqualType(def.ret, { tag: "object", name: "None" }) && !checkReturn(typedStmts)) {
@@ -403,11 +396,11 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
       // Member variable
       // check if obj class is defined
       if (!refEnv.class.has(typedObj.a.name)) {
-        throw new Error(`TypeError: Cannot access property of non-class: ${typedObj.a.name}`);
+        throw new Error(`TYPE ERROR: Cannot access property of non-class: ${typedObj.a.name}`);
       }
       // check if obj class has member variable
       if (!refEnv.class.get(typedObj.a.name).var.has(expr.name)) {
-        throw new Error(`TypeError: Class ${typedObj.a.name} has no property ${expr.name}`);
+        throw new Error(`TYPE ERROR: Class ${typedObj.a.name} has no property ${expr.name}`);
       }
       return {
         ...expr,
@@ -424,13 +417,10 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
     case "binexpr":
       const lhs = typeCheckExpr(expr.lhs, refEnv);
       const rhs = typeCheckExpr(expr.rhs, refEnv);
-      if (!isEqualType(lhs.a, rhs.a)) {
-        throw new Error("TypeError: Cannot operate " + lhs.a.name + " type and " + rhs.a.name + " type with operator " + expr.op);
-      }
       switch (expr.op) {
         case BinOp.Eq:
         case BinOp.Ne:
-          if (isEqualPrimitiveType(lhs.a, "int")) {
+          if (isEqualPrimitiveType(lhs.a, "int") && isEqualPrimitiveType(rhs.a, "int")) {
             return {
               ...expr,
               a: { tag: "primitive", name: "bool" },
@@ -438,7 +428,7 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
               rhs: rhs
             };
           }
-          if (isEqualPrimitiveType(lhs.a, "bool")) {
+          if (isEqualPrimitiveType(lhs.a, "bool") && isEqualPrimitiveType(rhs.a, "bool")) {
             return {
               ...expr,
               a: { tag: "primitive", name: "bool" },
@@ -446,12 +436,12 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
               rhs: rhs
             };
           }
-          throw new Error("TypeError: Cannot operate " + lhs.a + " and " + rhs.a + " with operator " + expr.op);
+          throw new Error("TYPE ERROR: Cannot operate " + lhs.a + " and " + rhs.a + " with operator " + expr.op);
         case BinOp.Lt:
         case BinOp.Le:
         case BinOp.Gt:
         case BinOp.Ge:
-          if (isEqualPrimitiveType(lhs.a, "int")) {
+          if (isEqualPrimitiveType(lhs.a, "int") && isEqualPrimitiveType(rhs.a, "int")) {
             return {
               ...expr,
               a: { tag: "primitive", name: "bool" },
@@ -459,13 +449,13 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
               rhs: rhs
             };
           }
-          throw new Error("TypeError: Cannot operate " + lhs.a + " and " + rhs.a + " with operator " + expr.op);
+          throw new Error("TYPE ERROR: Cannot operate " + lhs.a + " and " + rhs.a + " with operator " + expr.op);
         case BinOp.Add:
         case BinOp.Sub:
         case BinOp.Mul:
         case BinOp.Div:
         case BinOp.Mod:
-          if (isEqualPrimitiveType(lhs.a, "int")) {
+          if (isEqualPrimitiveType(lhs.a, "int") && isEqualPrimitiveType(rhs.a, "int")) {
             return {
               ...expr,
               a: { tag: "primitive", name: "int" },
@@ -473,9 +463,9 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
               rhs: rhs
             };
           }
-          throw new Error("TypeError: Cannot operate " + lhs.a + " and " + rhs.a + " with operator " + expr.op);
+          throw new Error("TYPE ERROR: Cannot operate " + lhs.a + " and " + rhs.a + " with operator " + expr.op);
         case BinOp.Is:
-          if (lhs.a.tag === "object") {
+          if (lhs.a.tag === "object" && rhs.a.tag === "object") {
             return {
               ...expr,
               a: { tag: "primitive", name: "bool" },
@@ -483,10 +473,10 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
               rhs: rhs
             };
           }
-          throw new Error("TypeError: Cannot operate " + lhs.a + " and " + rhs.a + " with operator " + expr.op);
+          throw new Error("TYPE ERROR: Cannot operate " + lhs.a + " and " + rhs.a + " with operator " + expr.op);
         default:
           // @ts-ignore
-          throw new Error("TypeError: Unknown operator " + expr.op);
+          throw new Error("TYPE ERROR: Unknown operator " + expr.op);
       }
     case "call":
       const typedObjCall = typeCheckExpr(expr.obj, refEnv);
@@ -524,7 +514,7 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
       // ex. (A.a()).b()
       else {
         if (typedObjCall.a.tag !== "object") {
-          throw new Error("TypeError: Cannot call method on non-object: " + typedObjCall.a.name);
+          throw new Error("TYPE ERROR: Cannot call method on non-object: " + typedObjCall.a.name);
         }
         // Add self as first argument
         const typedArgs = expr.args.map(arg => typeCheckExpr(arg, refEnv));
@@ -551,12 +541,12 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
     // const funcType = refEnv.func.get(funcName);
     // typedArgsType.forEach((argType, i) => {
     //   if (!isEqualType(funcType[0][i], argType)) {
-    //     throw new Error(`TypeError: Function ${funcName} expects argument ${i} to be ${funcType[0][i]}, but ${argType} given`);
+    //     throw new Error(`TYPE ERROR: Function ${funcName} expects argument ${i} to be ${funcType[0][i]}, but ${argType} given`);
     //   }
     // });
     default:
       // @ts-ignore
-      throw new Error("TypeError: Unknown expression " + expr.tag);
+      throw new Error("TYPE ERROR: Unknown expression " + expr.tag);
   }
 }
 

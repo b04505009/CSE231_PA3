@@ -105,6 +105,19 @@ export function isEqualType(type1: Type, type2: Type): boolean {
   return type1.tag === type2.tag && type1.name === type2.name;
 }
 
+export function isAssignable(type1: Type, type2: Type): boolean {
+  if (type1 === null || type2 === null) {
+    return false;
+  }
+  if (type1.tag === "primitive" && type2.tag === "primitive") {
+    return type1.name === type2.name;
+  }
+  if (type1.tag === "object" && type2.tag === "object") {
+    return type1.name === "None" || type2.name === "None" || type1.name === type2.name;
+  }
+  return false;
+}
+
 export function isEqualPrimitiveType(type: Type, prim: string): boolean {
   return type.tag === "primitive" && type.name === prim;
 }
