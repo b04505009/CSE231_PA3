@@ -14,22 +14,39 @@ import { typeCheckProgram } from './typechecker';
 // is given for this in the docs page, and I haven't spent time on the domain
 // module to figure out what's going on here. It doesn't seem critical for WABT
 // to have this support, so we patch it away.
-if(typeof process !== "undefined") {
+if (typeof process !== "undefined") {
   const oldProcessOn = process.on;
-  process.on = (...args : any) : any => {
-    if(args[0] === "uncaughtException") { return; }
+  process.on = (...args: any): any => {
+    if (args[0] === "uncaughtException") { return; }
     else { return oldProcessOn.apply(process, args); }
   };
 }
 
-export async function run(chocoPyCode : string, config: any) : Promise<number> {
+export async function run(chocoPyCode: string, config: any): Promise<number> {
   const wabtApi = await wabt();
   const parsedProg = parse(chocoPyCode);
   const typedProg = typeCheckProgram(parsedProg);
   const compiledProg = compile(typedProg);
-  const importObject = config.importObject;
+
+  console.log(compiledProg.wasmSource);
+
+  var importObject = {
+    ...config.importObject,
+    imports: {
+      ...config.importObject.imports,
+      runtimeError: () => {
+        importObject.output += "RUNTIME ERROR: Operation on None";
+        importObject.output += "\n";
+        throw new Error("runtimeError");
+      },
+    },
+    js: {
+      mem: new WebAssembly.Memory({ initial: 1 })
+    }
+  };
   const myModule = wabtApi.parseWat("test.wat", compiledProg.wasmSource);
-  const asBinary  = myModule.toBinary({});
+  const asBinary = myModule.toBinary({});
   const wasmModule = await WebAssembly.instantiate(asBinary.buffer, importObject);
+
   return (wasmModule.instance.exports as any)._start();
 }

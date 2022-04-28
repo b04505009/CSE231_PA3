@@ -1,4 +1,4 @@
-import { Body, Type, Expr, Stmt, Literal, BinOp, VarInit, FuncDef, NoneType, ClassDef, isEqualType, isEqualPrimitiveType } from "./ast";
+import { Body, Type, Expr, Stmt, Literal, BinOp, VarInit, FuncDef, NoneType, ClassDef, isEqualType, isEqualPrimitiveType, funcNameMangling } from "./ast";
 
 type TypeEnv = {
   var?: Map<string, Type>;
@@ -7,12 +7,6 @@ type TypeEnv = {
   mangledFuncs?: Map<string, Type>;
   class?: Map<string, TypeEnv>;
   ret?: Type;
-}
-
-
-
-export function funcNameMangling(name: string, objName: string, args: Type[]): string {
-  return objName + "$$" + name + "$$" + args.map(t => t.name.toString()).join("$");
 }
 
 export function checkDuplicateID(name: string, mapList: (Map<string, any> | Set<string>)[]): void {
@@ -65,17 +59,18 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
   });
 
   // Add mangled funcdefs to globalEnv
-  prog.funcdefs.forEach(funcdef => {
+  prog.funcdefs.forEach((funcdef, i) => {
     // mangled funcname cannot duplicate with each other
     const mangledName = funcNameMangling(funcdef.name, "", funcdef.params.map(p => p.type));
     checkDuplicateID(mangledName, [globalEnv.mangledFuncs]);
     globalEnv.mangledFuncs.set(mangledName, funcdef.ret);
 
+    prog.funcdefs[i].name = mangledName;
   });
 
   // Check classdefs
   // Add classdefs to globalEnv
-  prog.classdefs.forEach(classdef => {
+  prog.classdefs.forEach((classdef, i) => {
     // classname cannot duplicate with var, func, class
     checkDuplicateID(classdef.name, [globalEnv.var, globalEnv.func, globalEnv.class]);
     // Add class to globalEnv.class
@@ -102,11 +97,13 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
     });
 
     // Add mangled funcdefs to globalEnv
-    classdef.body.funcdefs.forEach(funcdef => {
+    classdef.body.funcdefs.forEach((funcdef, j) => {
       // mangled funcname cannot duplicate with each other
       const mangledName = funcNameMangling(funcdef.name, classdef.name, funcdef.params.map(p => p.type));
       checkDuplicateID(mangledName, [globalEnv.mangledFuncs]);
       globalEnv.mangledFuncs.set(mangledName, funcdef.ret);
+
+      prog.classdefs[i].body.funcdefs[j].name = mangledName;
     });
   })
 
@@ -195,7 +192,12 @@ export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalE
           if (!isEqualType(typedValue.a, refEnv.var.get(stmt.target.name))) {
             throw new Error(`TypeError: Cannot assign value of type ${typedValue.a.name} to variable ${stmt.target.name} of type ${refEnv.var.get(stmt.target.name).name}`);
           }
-          typedStmts.push({ ...stmt, a: { tag: "object", name: "None" } });
+          typedStmts.push({
+            ...stmt,
+            a: { tag: "object", name: "None" },
+            target: { ...stmt.target, obj: typedObj, a: typedValue.a },
+            value: typedValue,
+          });
           break;
         }
         // Class member assignment
@@ -206,7 +208,12 @@ export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalE
         if (!isEqualType(refEnv.class.get(typedObj.a.name).var.get(stmt.target.name), typedValue.a)) {
           throw new Error(`TypeError: Cannot assign value of type ${typedValue.a.name} to member ${stmt.target.name} of type ${refEnv.class.get(typedObj.a.name).var.get(stmt.target.name).name}`);
         }
-        typedStmts.push({ ...stmt, a: { tag: "object", name: "None" } });
+        typedStmts.push({
+          ...stmt,
+          a: { tag: "object", name: "None" },
+          target: { ...stmt.target, obj: typedObj, a: typedValue.a },
+          value: typedValue,
+        });
         break;
       case "return":
         const typedRet = typeCheckExpr(stmt.ret, refEnv);
@@ -377,21 +384,23 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
       const lit = typeCheckLiteral(expr.value);
       return {
         ...expr,
-        a: lit.a
+        a: lit.a,
+        value: lit,
       };
     case "id":
+      const typedObj = typeCheckExpr(expr.obj, refEnv);
       // Normal variable
-      if (expr.obj === null) {
+      if (typedObj === null) {
         if (!refEnv.var.has(expr.name)) {
           throw new Error(`ReferenceError: Undefined variable ${expr.name}`);
         }
         return {
           ...expr,
-          a: refEnv.var.get(expr.name)
+          a: refEnv.var.get(expr.name),
+          obj: typedObj,
         };
       }
       // Member variable
-      const typedObj = typeCheckExpr(expr.obj, refEnv);
       // check if obj class is defined
       if (!refEnv.class.has(typedObj.a.name)) {
         throw new Error(`TypeError: Cannot access property of non-class: ${typedObj.a.name}`);
@@ -409,6 +418,7 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
       const typedUniExpr = typeCheckExpr(expr.expr, refEnv);
       return {
         ...expr,
+        expr: typedUniExpr,
         a: typedUniExpr.a
       };
     case "binexpr":
@@ -479,53 +489,63 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
           throw new Error("TypeError: Unknown operator " + expr.op);
       }
     case "call":
-      const typedArgs = expr.args.map(arg => typeCheckExpr(arg, refEnv));
-      const typedArgsType = typedArgs.map(arg => arg.a);
+      const typedObjCall = typeCheckExpr(expr.obj, refEnv);
       // Constructor or Normal function
       // ex. A()
       // ex. a()
-      if (expr.obj === null) {
+      if (typedObjCall === null) {
         // Constructor
+        const typedArgs = expr.args.map(arg => typeCheckExpr(arg, refEnv));
+        const typedArgsType = typedArgs.map(arg => arg.a);
         if (refEnv.class.has(expr.name)) {
           // TODO: check the number of arguments for constructor
           return {
             a: { tag: "object", name: expr.name },
             tag: "constructor",
             args: typedArgs,
-            name: expr.name
+            name: expr.name,
           }
         }
         // Normal function call
-        const funcName = funcNameMangling(expr.name, "", typedArgsType)
+        const funcName = funcNameMangling(expr.name, "", typedArgsType);
         if (!refEnv.mangledFuncs.has(funcName)) {
           throw new Error(`ReferenceError: Undefined function ${funcName}`);
         }
         return {
           ...expr,
           a: refEnv.mangledFuncs.get(funcName),
-          args: typedArgs
+          obj: typedObjCall,
+          args: typedArgs,
+          name: funcName
         };
       }
       // Method call
       // ex. A.b()
       // ex. (A.a()).b()
       else {
-        const typedObj = typeCheckExpr(expr.obj, refEnv);
-        if (typedObj.a.tag !== "object") {
-          throw new Error("TypeError: Cannot call method on non-object: " + typedObj.a.name);
+        if (typedObjCall.a.tag !== "object") {
+          throw new Error("TypeError: Cannot call method on non-object: " + typedObjCall.a.name);
         }
         // Add self as first argument
-        typedArgsType.unshift(typedObj.a);
+        const typedArgs = expr.args.map(arg => typeCheckExpr(arg, refEnv));
+        typedArgs.unshift({
+          tag: "id",
+          obj: null,
+          name: "self",
+          a: typedObjCall.a
+        })
+        const typedArgsType = typedArgs.map(arg => arg.a);
 
-        const funcName = funcNameMangling(expr.name, typedObj.a.name, typedArgsType)
+        const funcName = funcNameMangling(expr.name, typedObjCall.a.name, typedArgsType)
         if (!refEnv.mangledFuncs.has(funcName)) {
           throw new Error(`ReferenceError: Undefined function ${funcName}`);
         }
         return {
           ...expr,
           a: refEnv.mangledFuncs.get(funcName),
-          obj: typedObj,
-          args: typedArgs
+          obj: typedObjCall,
+          args: typedArgs,
+          name: funcName
         }
       }
     // const funcType = refEnv.func.get(funcName);

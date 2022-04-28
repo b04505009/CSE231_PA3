@@ -2,22 +2,29 @@ import { Body, Type, Expr, Stmt, Literal, BinOp, UniOp, VarInit, FuncDef, TypedV
 
 // https://learnxinyminutes.com/docs/wasm/
 
-type LocalEnv = Map<string, boolean>;
+type LocalEnv = Map<string, Type>;
 
 type CompileResult = {
   wasmSource: string,
 };
 
-const objStartTable = new Map<string, number>();
+const classMemberTable = new Map<string, VarInit<Type>[]>();
+
+var heapSize = 4;
 
 export function compile(prog: Body<Type>): CompileResult {
 
-  // console.log("compile: ", prog);
+  console.log("compile: ", prog);
 
   const emptyEnv: LocalEnv = new Map();
 
+  prog.classdefs.forEach(c => {
+    classMemberTable.set(c.name, c.body.varinits);
+  });
+
   const varsCode = prog.varinits.map(v => `(global $${v.name} (mut i32) ${codeGenLiteral(v.init)})`).join("\n");
   const funcsCode = prog.funcdefs.map(f => codeGenFunc(f, emptyEnv)).map(s => s.join("\n")).join("\n\n");
+  const MethodsCode = prog.classdefs.map(c => c.body.funcdefs.map(f => codeGenFunc(f, emptyEnv)).map(s => s.join("\n")).join("\n\n")).join("\n\n");
   const stmtsCode = prog.stmts.map(s => codeGenStmt(s, emptyEnv)).flat();
 
   const mainCode = [`(local $scratch i32)`, ...stmtsCode].join(
@@ -43,16 +50,20 @@ export function compile(prog: Body<Type>): CompileResult {
       (func $max (import "imports" "max") (param i32) (param i32) (result i32))
       (func $min (import "imports" "min") (param i32) (param i32) (result i32))
       (func $pow (import "imports" "pow") (param i32) (param i32) (result i32))
+      (func $runtimeError (import "imports" "runtimeError") (param i32))
+      (import "js" "mem" (memory 1))
       (global $$none (mut i32) (i32.const 0))
       (global $$heap (mut i32) (i32.const 4))
       ${varsCode}
       ${funcsCode}
+      ${MethodsCode}
       (func (export "_start") ${retType}
         ${mainCode}
         ${retVal}
       )
     ) 
-  `};
+  `,
+  };
 }
 
 export function codeGenFunc(func: FuncDef<any>, localEnv_: LocalEnv): Array<string> {
@@ -61,9 +72,9 @@ export function codeGenFunc(func: FuncDef<any>, localEnv_: LocalEnv): Array<stri
   if (func.params.length > 0) {
     params = func.params.map(p => `(param $${p.name} i32)`).join(" ");
   }
-  func.params.forEach(p => localEnv.set(p.name, true));
+  func.params.forEach(p => localEnv.set(p.name, p.type));
   const varinits = func.body.varinits.map(v => `(local $${v.name} i32) (local.set $${v.name} ${codeGenLiteral(v.init)})`).join("\n");
-  func.body.varinits.forEach(v => localEnv.set(v.name, true));
+  func.body.varinits.forEach(v => localEnv.set(v.name, v.type));
   const body = func.body.stmts.map(s => codeGenStmt(s, localEnv)).map(s => s.join("\n")).join("\n");
   return [
     `(func $${func.name} ${params} (result i32)
@@ -81,15 +92,34 @@ export function codeGenStmt(stmt: Stmt<Type>, localEnv: LocalEnv): Array<string>
       if (stmt.target.tag !== "id") {
         throw new Error("codeGenStmt: assign: target is not an id");
       }
-      if (stmt.target.obj === null) {
-        var valExpr = codeGenExpr(stmt.value, localEnv);
-        if (localEnv.get(stmt.target.name)) {
-          return valExpr.concat([`(local.set $${stmt.target.name})`]);
+      const obj = stmt.target.obj;
+      const name = stmt.target.name;
+      const valExpr = codeGenExpr(stmt.value, localEnv);
+      // variable assignment
+      if (obj === null) {
+        if (localEnv.get(name)) {
+          return valExpr.concat([`(local.set $${name})`]);
         }
-        return valExpr.concat([`(global.set $${stmt.target.name})`]);
+        return valExpr.concat([`(global.set $${name})`]);
       }
-
-
+      // class member assignment
+      const objExpr = codeGenExpr(obj, localEnv);
+      const offset = classMemberTable.get(obj.a.name).findIndex(m => m.name === name);
+      return [
+        ...objExpr,
+        `(if 
+            (then) 
+            (else 
+              (i32.const 0)
+              call $runtimeError
+              (i32.const 0)
+            ) 
+          )`,
+        `(i32.const ${offset * 4})`,
+        `(i32.add)`,
+        ...valExpr,
+        `(i32.store)`
+      ]
     case "if":
       const condExpr_if = codeGenExpr(stmt.cond, localEnv);
       const thenStmts = stmt.then.map(s => codeGenStmt(s, localEnv)).flat();
@@ -138,10 +168,23 @@ function codeGenExpr(expr: Expr<Type>, localEnv: LocalEnv): Array<string> {
     case "literal":
       return [codeGenLiteral(expr.value)];
     case "id":
-      if (localEnv.get(expr.name)) {
-        return [`(local.get $${expr.name})`];
+      // normal variable
+      if (expr.obj === null) {
+        if (localEnv.get(expr.name)) {
+          return [`(local.get $${expr.name})`];
+        }
+        return [`(global.get $${expr.name})`];
       }
-      return [`(global.get $${expr.name})`];
+      // member variable
+      // TODO: runtime error if obj is none
+      const objCode = codeGenExpr(expr.obj, localEnv);
+      const offset = classMemberTable.get(expr.obj.a.name).findIndex(m => m.name === expr.name);
+      return [
+        ...objCode,
+        `(i32.const ${offset * 4})`,
+        `(i32.add)`,
+        `(i32.load)`
+      ];
     case "uniexpr":
       return ["(i32.const 0)", ...codeGenExpr(expr.expr, localEnv), codeGenUniOp(expr.op)];
     case "binexpr":
@@ -151,6 +194,12 @@ function codeGenExpr(expr: Expr<Type>, localEnv: LocalEnv): Array<string> {
       return [...leftStmts, ...rightStmts, opStmts];
     case "call":
       const args = expr.args.map(a => codeGenExpr(a, localEnv)).flat();
+      // Method call
+      if (expr.obj !== null) {
+        const obj = codeGenExpr(expr.obj, localEnv);
+        return [...obj, ...(args.slice(1, args.length)), `(call $${expr.name})`];
+      }
+      // Function call
       switch (expr.name) {
         case "$$print$$int":
           return [...args, "(call $print_num)"];
@@ -161,6 +210,30 @@ function codeGenExpr(expr: Expr<Type>, localEnv: LocalEnv): Array<string> {
         default:
           return [...args, `(call $${expr.name})`];
       }
+    case "constructor":
+      // TODO: Deal with the args.
+      // const constructorCode = Array<string>();
+      // classMemberTable.get(expr.name).forEach(varinit => {
+      //   constructorCode.push(`(global.get $$heap)`);
+      //   constructorCode.push(codeGenLiteral(varinit.init));
+      //   constructorCode.push(`(i32.store)`);
+      //   heapSize += 4;
+      // });
+      let initvals = Array<string>();
+      classMemberTable.get(expr.name).forEach((varinit, i) => {
+        initvals = [
+          ...initvals,
+          `(global.get $$heap)`,
+          `(i32.add (i32.const ${i * 4}))`,
+          codeGenLiteral(varinit.init),
+          `(i32.store)`
+        ]
+      });
+      return [
+        ...initvals,
+        `(global.get $$heap)`,
+        `(global.set $$heap (i32.add (global.get $$heap) (i32.const ${classMemberTable.get(expr.name).length * 4})))`,
+      ]
     default:
     // throw new Error("Unsupported expr: " + expr.tag);
   }

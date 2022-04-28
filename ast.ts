@@ -18,6 +18,10 @@ export type FuncDef<A> = {
   a?: A, name: string, params: TypedVar<A>[], body: Body<A>, ret: Type
 }
 
+export function funcNameMangling(name: string, objName: string, args: Type[]): string {
+  return objName + "$$" + name + "$$" + args.map(t => t.name.toString()).join("$");
+}
+
 export type Stmt<A> =
   // target should be { tag: "id" }
   | { a?: A, tag: "assign", target: Expr<A>, value: Expr<A> }
