@@ -122,6 +122,10 @@ export function isEqualPrimitiveType(type: Type, prim: string): boolean {
   return type.tag === "primitive" && type.name === prim;
 }
 
+export function asObjectType(className: string): Type {
+  return { tag: "object", name: className }
+}
+
 // export function isBuiltin1(maybeBuiltin1: string): maybeBuiltin1 is builtin1 {
 //   return (<any>Object).values(builtin1).includes(maybeBuiltin1);
 // }

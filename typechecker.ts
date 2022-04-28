@@ -1,4 +1,5 @@
-import { Body, Type, Expr, Stmt, Literal, BinOp, VarInit, FuncDef, NoneType, ClassDef, isEqualType, isEqualPrimitiveType, funcNameMangling, isAssignable } from "./ast";
+import { Body, Type, Expr, Stmt, Literal, BinOp, VarInit, FuncDef, NoneType, ClassDef, isEqualType, isEqualPrimitiveType, funcNameMangling, isAssignable, asObjectType } from "./ast";
+import { parse } from "./parser"
 
 type TypeEnv = {
   var?: Map<string, Type>;
@@ -27,12 +28,12 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
   }
 
   globalEnv.mangledFuncs.set("$$print$$int",
-    { tag: "object", name: "None" }
+    { tag: "primitive", name: "int" }
   );
   globalEnv.mangledFuncs.set("$$print$$bool",
-    { tag: "object", name: "None" }
+    { tag: "primitive", name: "bool" }
   );
-  globalEnv.mangledFuncs.set("$$print$$none",
+  globalEnv.mangledFuncs.set("$$print$$None",
     { tag: "object", name: "None" }
   );
 
@@ -96,7 +97,19 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
       globalEnv.class.get(classdef.name).func.set(funcdef.name, [funcdef.params.map(p => p.type), funcdef.ret]);
     });
 
-    // Add mangled funcdefs to globalEnv
+    // If there's no explicit constructor, add an empty one
+    // TODO: Correct order should be letting explicit constructor overwrite
+    if (!globalEnv.class.get(classdef.name).func.has("__init__")) {
+      const initPyCode = `def __init__(self: ${classdef.name}):
+  pass
+`;
+      const initFuncAst = parse(initPyCode).funcdefs[0];
+      prog.classdefs[i].body.funcdefs.push(initFuncAst);
+    }
+  })
+
+  // Add mangled funcdefs to globalEnv
+  prog.classdefs.forEach((classdef, i) => {
     classdef.body.funcdefs.forEach((funcdef, j) => {
       // mangled funcname cannot duplicate with each other
       const mangledName = funcNameMangling(funcdef.name, classdef.name, funcdef.params.map(p => p.type));
@@ -129,7 +142,7 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
     class: new Map(),
     mangledFuncs: new Map(),
   });
-  typedProg.a = { tag: "object", name: "None" }
+  typedProg.a = asObjectType("None")
   if (typedProg.stmts.length > 0) {
     typedProg.a = typedProg.stmts[typedProg.stmts.length - 1].a;
   }
@@ -194,7 +207,7 @@ export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalE
           }
           typedStmts.push({
             ...stmt,
-            a: { tag: "object", name: "None" },
+            a: asObjectType("None"),
             target: { ...stmt.target, obj: typedObj, a: typedValue.a },
             value: typedValue,
           });
@@ -210,7 +223,7 @@ export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalE
         }
         typedStmts.push({
           ...stmt,
-          a: { tag: "object", name: "None" },
+          a: asObjectType("None"),
           target: { ...stmt.target, obj: typedObj, a: typedValue.a },
           value: typedValue,
         });
@@ -220,7 +233,7 @@ export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalE
         if (!isAssignable(typedRet.a, refEnv.ret)) {
           throw new Error(`TYPE ERROR: Cannot return value of type ${typedRet.a.name} from function with return type ${refEnv.ret.name}`);
         }
-        typedStmts.push({ ...stmt, a: { tag: "object", name: "None" }, ret: typedRet });
+        typedStmts.push({ ...stmt, a: asObjectType("None"), ret: typedRet });
         return typedStmts;
       case "if":
         const typedCond_if = typeCheckExpr(stmt.cond, refEnv);
@@ -229,7 +242,7 @@ export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalE
         }
         const typedThen = typeCheckStmts(stmt.then, localEnv, nonLocalEnv);
         const typedElse = typeCheckStmts(stmt.else, localEnv, nonLocalEnv);
-        typedStmts.push({ ...stmt, a: { tag: "object", name: "None" }, cond: typedCond_if, then: typedThen, else: typedElse });
+        typedStmts.push({ ...stmt, a: asObjectType("None"), cond: typedCond_if, then: typedThen, else: typedElse });
         break;
       case "while":
         const typedCond_while = typeCheckExpr(stmt.cond, refEnv);
@@ -237,10 +250,10 @@ export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalE
           throw new Error(`TYPE ERROR: Cannot use value of type ${typedCond_while.a} as condition`);
         }
         const typedLoop = typeCheckStmts(stmt.loop, localEnv, nonLocalEnv);
-        typedStmts.push({ ...stmt, a: { tag: "object", name: "None" }, cond: typedCond_while, loop: typedLoop });
+        typedStmts.push({ ...stmt, a: asObjectType("None"), cond: typedCond_while, loop: typedLoop });
         break;
       case "pass":
-        typedStmts.push({ ...stmt, a: { tag: "object", name: "None" } });
+        typedStmts.push({ ...stmt, a: asObjectType("None") });
         break;
       case "expr":
         const typedExpr = typeCheckExpr(stmt.expr, refEnv);
@@ -314,12 +327,12 @@ export function typeCheckFuncDef(def: FuncDef<null>, nonLocalEnv: TypeEnv): Func
   const typedStmts = typeCheckStmts(def.body.stmts, localEnv, nonLocalEnv);
 
   // If return type is not none, check if the function returns a value in all the paths
-  if (!isEqualType(def.ret, { tag: "object", name: "None" }) && !checkReturn(typedStmts)) {
+  if (!isEqualType(def.ret, asObjectType("None")) && !checkReturn(typedStmts)) {
     throw new Error("TYPE ERROR: All paths in this method / function must have a return value: " + def.name);
   }
   // If return type is none, add a return statement if there isn't one
-  if (isEqualType(def.ret, { tag: "object", name: "None" }) && !checkReturn(typedStmts)) {
-    typedStmts.push({ tag: "return", ret: { tag: "literal", a: { tag: "object", name: "None" }, value: { tag: "none" } } });
+  if (isEqualType(def.ret, asObjectType("None")) && !checkReturn(typedStmts)) {
+    typedStmts.push({ tag: "return", ret: { tag: "literal", a: asObjectType("None"), value: { tag: "none" } } });
   }
 
   return { ...def, params: typedParams, body: { a: def.ret, varinits: typedInits, stmts: typedStmts } };
@@ -354,12 +367,12 @@ export function typeCheckMethodDef(def: FuncDef<null>, classEnv: TypeEnv, nonLoc
   const typedStmts = typeCheckStmts(def.body.stmts, localEnv, nonLocalEnv);
 
   // If return type is not none, check if the function returns a value in all the paths
-  if (!isEqualType(def.ret, { tag: "object", name: "None" }) && !checkReturn(typedStmts)) {
+  if (!isEqualType(def.ret, asObjectType("None")) && !checkReturn(typedStmts)) {
     throw new Error("TYPE ERROR: All paths in this method / function must have a return value: " + def.name);
   }
   // If return type is none, add a return statement if there isn't one
-  if (isEqualType(def.ret, { tag: "object", name: "None" }) && !checkReturn(typedStmts)) {
-    typedStmts.push({ tag: "return", ret: { tag: "literal", a: { tag: "object", name: "None" }, value: { tag: "none" } } });
+  if (isEqualType(def.ret, asObjectType("None")) && !checkReturn(typedStmts)) {
+    typedStmts.push({ tag: "return", ret: { tag: "literal", a: asObjectType("None"), value: { tag: "none" } } });
   }
 
   return { ...def, params: typedParams, body: { a: def.ret, varinits: typedInits, stmts: typedStmts } };
@@ -497,6 +510,16 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
           }
         }
         // Normal function call
+        // We should pass it at tc if print with object
+        if (expr.name === "print" && typedArgs.length === 1 && typedArgs[0].a.tag === "object") {
+          return {
+            ...expr,
+            a: asObjectType("None"),
+            obj: typedObjCall,
+            args: typedArgs,
+            name: "$$print$$None"
+          }
+        }
         const funcName = funcNameMangling(expr.name, "", typedArgsType);
         if (!refEnv.mangledFuncs.has(funcName)) {
           throw new Error(`ReferenceError: Undefined function ${funcName}`);
@@ -566,7 +589,7 @@ export function typeCheckLiteral(lit: Literal<null>): Literal<Type> {
     default:
       return {
         ...lit,
-        a: { tag: "object", name: "None" }
+        a: asObjectType("None")
       };
   }
 }

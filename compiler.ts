@@ -1,4 +1,5 @@
-import { Body, Type, Expr, Stmt, Literal, BinOp, UniOp, VarInit, FuncDef, TypedVar } from "./ast";
+import { fileURLToPath } from "url";
+import { Body, Type, Expr, Stmt, Literal, BinOp, UniOp, VarInit, FuncDef, funcNameMangling, asObjectType } from "./ast";
 
 // https://learnxinyminutes.com/docs/wasm/
 
@@ -63,6 +64,7 @@ export function compile(prog: Body<Type>): CompileResult {
   `,
   };
 }
+
 
 export function codeGenFunc(func: FuncDef<any>, localEnv_: LocalEnv): Array<string> {
   const localEnv = new Map(localEnv_);
@@ -214,7 +216,17 @@ function codeGenExpr(expr: Expr<Type>, localEnv: LocalEnv): Array<string> {
         case "$$print$$bool":
           return [...args, "(call $print_bool)"];
         case "$$print$$None":
-          return [...args, "(call $print_none)"];
+          return [
+            ...args,
+            `(if 
+              (then
+                (i32.const 1)
+                call $runtimeError
+              ) 
+              (else) 
+            )`,
+            "(i32.const 0)",
+            "(call $print_none)"];
         default:
           return [...args, `(call $${expr.name})`];
       }
@@ -230,8 +242,12 @@ function codeGenExpr(expr: Expr<Type>, localEnv: LocalEnv): Array<string> {
           `(i32.store)`
         ]
       });
+
       return [
         ...initvals,
+        `(global.get $$heap)`,
+        `(call $${funcNameMangling("__init__", expr.name, [asObjectType(expr.a.name)])})`,
+        `drop`,
         `(global.get $$heap)`,
         `(global.set $$heap (i32.add (global.get $$heap) (i32.const ${classMemberTable.get(expr.name).length * 4})))`,
       ]

@@ -34,10 +34,18 @@ export async function run(chocoPyCode: string, config: any): Promise<number> {
     ...config.importObject,
     imports: {
       ...config.importObject.imports,
-      runtimeError: () => {
-        importObject.output += "RUNTIME ERROR: Operation on None";
-        importObject.output += "\n";
-        throw new Error("RUNTIME ERROR: Operation on None");
+      runtimeError: (arg: any) => {
+        switch (arg) {
+          case 0:
+            importObject.output += "RUNTIME ERROR: Operation on None";
+            importObject.output += "\n";
+            throw new Error("RUNTIME ERROR: Operation on None");
+          case 1:
+            importObject.output += "RUNTIME ERROR: Invalid argument";
+            importObject.output += "\n";
+            throw new Error("RUNTIME ERROR: Invalid argument");
+        }
+
       },
     },
     js: {
