@@ -280,7 +280,6 @@ export function checkReturn(stmts: Stmt<Type>[]): boolean {
   return false;
 }
 
-// TODO: localEnv should be created outside of this function and passed in?
 export function typeCheckFuncDef(def: FuncDef<null>, nonLocalEnv: TypeEnv): FuncDef<Type> {
   const localEnv: TypeEnv = {
     var: new Map(),
@@ -493,7 +492,7 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
           }
         }
         // Normal function call
-        // TODO: built-in function
+        // TODO: Create a statement case for built-in function
         // We should pass it at tc if print with object
         if (expr.name === "print") {
           if (typedArgs.length != 1) {

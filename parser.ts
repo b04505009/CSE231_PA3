@@ -290,7 +290,6 @@ export function traverseStmt(c: TreeCursor, s: string): Stmt<null> {
         throw new Error("TYPE ERROR: cannot assign to " + c.type.name)
       }
     case "IfStatement":
-      // TODO: elif
       c.firstChild(); // "if"
       var if_ = traverseIf(c, s);
       c.parent(); // IfStatement
