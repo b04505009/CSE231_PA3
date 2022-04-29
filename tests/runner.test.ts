@@ -315,7 +315,7 @@ def f(x:int)->int:
     catch (e) {
       err = e.message;
     }
-    expect(err).to.equal("TYPE ERROR: All paths in this method / function must have a return value: $$f$$int");
+    expect(err).to.equal("TYPE ERROR: All paths in this method / function must have a return value: f");
   });
 
   it('test 17', async () => {
@@ -337,7 +337,7 @@ def f(x:int)->int:
     catch (e) {
       err = e.message;
     }
-    expect(err).to.equal("TYPE ERROR: All paths in this method / function must have a return value: $$f$$int");
+    expect(err).to.equal("TYPE ERROR: All paths in this method / function must have a return value: f");
   });
 
   it('test 18', async () => {

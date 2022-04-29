@@ -66,7 +66,7 @@ export function compile(prog: Body<Type>): CompileResult {
 }
 
 
-export function codeGenFunc(func: FuncDef<any>, localEnv_: LocalEnv): Array<string> {
+export function codeGenFunc(func: FuncDef<Type>, localEnv_: LocalEnv): Array<string> {
   const localEnv = new Map(localEnv_);
   var params = "";
   if (func.params.length > 0) {
@@ -177,7 +177,6 @@ function codeGenExpr(expr: Expr<Type>, localEnv: LocalEnv): Array<string> {
         return [`(global.get $${expr.name})`];
       }
       // member variable
-      // TODO: runtime error if obj is none
       const objCode = codeGenExpr(expr.obj, localEnv);
       const offset = classMemberTable.get(expr.obj.a.name).findIndex(m => m.name === expr.name);
       return [
@@ -246,7 +245,7 @@ function codeGenExpr(expr: Expr<Type>, localEnv: LocalEnv): Array<string> {
       return [
         ...initvals,
         `(global.get $$heap)`,
-        `(call $${funcNameMangling("__init__", expr.name, [asObjectType(expr.a.name)])})`,
+        `(call $${funcNameMangling("__init__", expr.name)})`,
         `drop`,
         `(global.get $$heap)`,
         `(global.set $$heap (i32.add (global.get $$heap) (i32.const ${classMemberTable.get(expr.name).length * 4})))`,

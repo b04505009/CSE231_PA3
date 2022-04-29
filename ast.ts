@@ -18,20 +18,8 @@ export type FuncDef<A> = {
   a?: A, name: string, params: TypedVar<A>[], body: Body<A>, ret: Type
 }
 
-export function funcNameMangling(name: string, objName: string, args: Type[]): string {
-  return objName + "$$" + name + "$$" + args.map(t => t.name.toString()).join("$");
-  // let mangledArgs = ""
-  // args.forEach(t => {
-  //   if (t.tag === "primitive") {
-  //     mangledArgs += t.name.toString()
-  //   }
-  //   else {
-  //     mangledArgs += "object"
-  //   }
-  //   mangledArgs += "$"
-  // }
-  // )
-  // return objName + "$$" + name + "$$" + mangledArgs
+export function funcNameMangling(name: string, objName: string): string {
+  return objName + "$$" + name;
 }
 
 export type Stmt<A> =
@@ -46,9 +34,6 @@ export type Stmt<A> =
   | { a?: A, tag: "funcDef" }
   | { a?: A, tag: "classDef" }
 
-// | { a?: A, tag: "assign", obj?: Expr<A>, name: string, value: Expr<A> }
-// | { a?: A, tag: "memberAssign", obj: Expr<A>, name: string, value: Expr<A> }
-
 export type Expr<A> =
   | { a?: A, tag: "literal", value: Literal<A> }
   | { a?: A, tag: "id", obj: Expr<A>, name: string }
@@ -58,11 +43,6 @@ export type Expr<A> =
   // func.obj should be either "id" or "call" or "constructor" when tc
   | { a?: A, tag: "call", obj: Expr<A>, name: string, args: Expr<A>[] }
   | { a?: A, tag: "constructor", name: string, args: Expr<A>[] }
-
-// | { a?: A, tag: "call", func: Expr<A>, args: Expr<A>[]}
-// | { a?: A, tag: "call", obj?: Expr<A>, name: string, args: Expr<A>[] }
-// | { a?: A, tag: "member", obj: Expr<A>, name: string }
-// | { a?: A, tag: "memberCall", obj: Expr<A>, name: string, args: Expr<A>[] }
 // | { a?: A, tag: "builtin1", name: builtin1, arg: Expr<A> }
 // | { a?: A, tag: "builtin2", name: builtin2, arg1: Expr<A>, arg2: Expr<A> }
 

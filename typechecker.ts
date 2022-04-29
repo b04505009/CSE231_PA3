@@ -3,9 +3,7 @@ import { parse } from "./parser"
 
 type TypeEnv = {
   var?: Map<string, Type>;
-  // TODO: check if we need func after we have mangledFunc
   func?: Map<string, [Type[], Type]>;
-  mangledFuncs?: Map<string, Type>;
   class?: Map<string, TypeEnv>;
   ret?: Type;
 }
@@ -23,19 +21,9 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
   const globalEnv: TypeEnv = {
     var: new Map(),
     func: new Map(),
-    mangledFuncs: new Map(),
+    // mangledFuncs: new Map(),
     class: new Map(),
   }
-
-  globalEnv.mangledFuncs.set("$$print$$int",
-    { tag: "primitive", name: "int" }
-  );
-  globalEnv.mangledFuncs.set("$$print$$bool",
-    { tag: "primitive", name: "bool" }
-  );
-  globalEnv.mangledFuncs.set("$$print$$None",
-    { tag: "object", name: "None" }
-  );
 
   const typedProg: Body<Type> = {
     varinits: [],
@@ -55,18 +43,9 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
   // Add unmangled funcdefs to globalEnv
   prog.funcdefs.forEach(funcdef => {
     // funcname cannot duplicate with var
-    checkDuplicateID(funcdef.name, [globalEnv.var]);
+    // funcname cannot duplicate with func since we do not accept overloading
+    checkDuplicateID(funcdef.name, [globalEnv.var, globalEnv.func]);
     globalEnv.func.set(funcdef.name, [funcdef.params.map(p => p.type), funcdef.ret]);
-  });
-
-  // Add mangled funcdefs to globalEnv
-  prog.funcdefs.forEach((funcdef, i) => {
-    // mangled funcname cannot duplicate with each other
-    const mangledName = funcNameMangling(funcdef.name, "", funcdef.params.map(p => p.type));
-    checkDuplicateID(mangledName, [globalEnv.mangledFuncs]);
-    globalEnv.mangledFuncs.set(mangledName, funcdef.ret);
-
-    prog.funcdefs[i].name = mangledName;
   });
 
   // Check classdefs
@@ -92,48 +71,39 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
       globalEnv.class.get(classdef.name).var.set(varinit.name, varinit.type);
     });
 
-    // Add funcdefs to globalEnv.class[classdef.name].func
-    classdef.body.funcdefs.forEach(funcdef => {
-      // funcname cannot duplicate with var, func
-      checkDuplicateID(funcdef.name, [globalEnv.class.get(classdef.name).var]);
-      // Add func to globalEnv.class
-      globalEnv.class.get(classdef.name).func.set(funcdef.name, [funcdef.params.map(p => p.type), funcdef.ret]);
+    classdef.body.funcdefs.forEach((funcdef, j) => {
+      // Check explicit constructor
       if (funcdef.name === "__init__") {
-        hasInit = true;
         if (funcdef.params.length != 1) {
-          throw new Error(`TYPE ERROR: `)
+          throw new Error(`TYPE ERROR: __init__ must have exactly one parameter: ${classdef.name}`);
         }
+        hasInit = true;
       }
+      // funcname cannot duplicate with var, func
+      checkDuplicateID(funcdef.name, [globalEnv.class.get(classdef.name).var, globalEnv.class.get(classdef.name).func]);
+      // Mangled funcname 
+      const mangledName = funcNameMangling(funcdef.name, classdef.name);
+      prog.classdefs[i].body.funcdefs[j].name = mangledName
+      // Add mangled funcdefs to globalEnv.class[classdef.name].func
+      globalEnv.class.get(classdef.name).func.set(funcdef.name, [funcdef.params.map(p => p.type), funcdef.ret]);
+      // Add mangled funcdefs to globalEnv.func
+      globalEnv.func.set(mangledName, [funcdef.params.map(p => p.type), funcdef.ret]);
     });
 
     // If there's no explicit constructor, add an empty one
-    // TODO: Correct order should be letting explicit constructor overwrite
     if (!hasInit) {
       const initPyCode = `def __init__(self: ${classdef.name}):
   pass
 `;
       const initFuncAst = parse(initPyCode).funcdefs[0];
+      initFuncAst.name = funcNameMangling(initFuncAst.name, classdef.name);
       prog.classdefs[i].body.funcdefs.push(initFuncAst);
-    }
-    // If there's an explicit constructor, check its args
-    else {
-      globalEnv.class.get(classdef.name).func.get("__init__").
+      globalEnv.class.get(classdef.name).func.set(initFuncAst.name, [initFuncAst.params.map(p => p.type), initFuncAst.ret]);
+      globalEnv.func.set(initFuncAst.name, [initFuncAst.params.map(p => p.type), initFuncAst.ret]);
     }
   })
 
-  // Add mangled funcdefs to globalEnv
-  prog.classdefs.forEach((classdef, i) => {
-    classdef.body.funcdefs.forEach((funcdef, j) => {
-      // mangled funcname cannot duplicate with each other
-      const mangledName = funcNameMangling(funcdef.name, classdef.name, funcdef.params.map(p => p.type));
-      checkDuplicateID(mangledName, [globalEnv.mangledFuncs]);
-      globalEnv.mangledFuncs.set(mangledName, funcdef.ret);
-
-      prog.classdefs[i].body.funcdefs[j].name = mangledName;
-    });
-  })
-
-  console.log("globalEnv:", globalEnv)
+  // console.log("globalEnv:", globalEnv)
 
   // Check varinits
   typedProg.varinits = typeCheckVarInits(prog.varinits);
@@ -153,7 +123,6 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
     var: new Map(),
     func: new Map(),
     class: new Map(),
-    mangledFuncs: new Map(),
   });
   typedProg.a = asObjectType("None")
   if (typedProg.stmts.length > 0) {
@@ -191,7 +160,6 @@ export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalE
     var: new Map([...nonLocalEnv.var, ...localEnv.var]),
     func: new Map([...nonLocalEnv.func, ...localEnv.func]),
     class: new Map([...nonLocalEnv.class, ...localEnv.class]),
-    mangledFuncs: new Map([...nonLocalEnv.mangledFuncs, ...localEnv.mangledFuncs]),
     ret: localEnv.ret,
   }
 
@@ -318,7 +286,6 @@ export function typeCheckFuncDef(def: FuncDef<null>, nonLocalEnv: TypeEnv): Func
     var: new Map(),
     func: new Map(),
     class: new Map(),
-    mangledFuncs: new Map(),
   };
   const typedParams = def.params.map(param => ({ ...param, a: param.type }))
   // Add parameters to local env
@@ -511,9 +478,9 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
       // ex. A()
       // ex. a()
       if (typedObjCall === null) {
-        // Constructor
         const typedArgs = expr.args.map(arg => typeCheckExpr(arg, refEnv));
         const typedArgsType = typedArgs.map(arg => arg.a);
+        // Constructor
         if (refEnv.class.has(expr.name)) {
           if (typedArgs.length != 0) {
             throw new Error(`TYPE ERROR: Constructor ${expr.name}() cannot have argument`)
@@ -526,26 +493,58 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
           }
         }
         // Normal function call
+        // TODO: built-in function
         // We should pass it at tc if print with object
-        if (expr.name === "print" && typedArgs.length === 1 && typedArgs[0].a.tag === "object") {
-          return {
-            ...expr,
-            a: asObjectType("None"),
-            obj: typedObjCall,
-            args: typedArgs,
-            name: "$$print$$None"
+        if (expr.name === "print") {
+          if (typedArgs.length != 1) {
+            throw new Error(`TYPE ERROR: print() requires one argument`)
+          }
+          switch (typedArgs[0].a.tag) {
+            case "object":
+              return {
+                ...expr,
+                a: asObjectType("None"),
+                args: typedArgs,
+                name: "$$print$$None",
+              }
+            case "primitive":
+              switch (typedArgs[0].a.name) {
+                case "int":
+                  return {
+                    ...expr,
+                    a: asObjectType("None"),
+                    args: typedArgs,
+                    name: "$$print$$int",
+                  }
+                case "bool":
+                  return {
+                    ...expr,
+                    a: asObjectType("None"),
+                    args: typedArgs,
+                    name: "$$print$$bool",
+                  }
+              }
           }
         }
-        const funcName = funcNameMangling(expr.name, "", typedArgsType);
-        if (!refEnv.mangledFuncs.has(funcName)) {
-          throw new Error(`TYPE ERROR: Undefined function ${funcName}`);
+        if (!refEnv.func.has(expr.name)) {
+          throw new Error(`TYPE ERROR: Undefined function ${expr.name}`);
         }
+        // Check if function has correct number of arguments
+        const func = refEnv.func.get(expr.name);
+        if (func[0].length !== typedArgs.length) {
+          throw new Error(`TYPE ERROR: Function ${expr.name} expects ${func[0].length} arguments, but ${typedArgs.length} given`);
+        }
+        // Check if arguments are of correct type
+        typedArgsType.forEach((argType, i) => {
+          if (!isAssignable(func[0][i], argType)) {
+            throw new Error(`TYPE ERROR: Function ${expr.name} expects argument ${i} to be ${func[0][i].name}, but ${argType.name} given`);
+          }
+        });
         return {
           ...expr,
-          a: refEnv.mangledFuncs.get(funcName),
+          a: refEnv.func.get(expr.name)[1],
           obj: typedObjCall,
           args: typedArgs,
-          name: funcName
         };
       }
       // Method call
@@ -564,25 +563,29 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
           a: typedObjCall.a
         })
         const typedArgsType = typedArgs.map(arg => arg.a);
-
-        const funcName = funcNameMangling(expr.name, typedObjCall.a.name, typedArgsType)
-        if (!refEnv.mangledFuncs.has(funcName)) {
+        const funcName = funcNameMangling(expr.name, typedObjCall.a.name)
+        if (!refEnv.func.has(funcName)) {
           throw new Error(`TYPE ERROR: Undefined function ${funcName}`);
         }
+        // Check if function has correct number of arguments
+        const func = refEnv.func.get(funcName);
+        if (func[0].length !== typedArgs.length) {
+          throw new Error(`TYPE ERROR: Function ${expr.name} expects ${func[0].length} arguments, but ${typedArgs.length} given`);
+        }
+        // Check if arguments are of correct type
+        typedArgsType.forEach((argType, i) => {
+          if (!isAssignable(func[0][i], argType)) {
+            throw new Error(`TYPE ERROR: Function ${expr.name} expects argument ${i} to be ${func[0][i].name}, but ${argType.name} given`);
+          }
+        });
         return {
           ...expr,
-          a: refEnv.mangledFuncs.get(funcName),
+          a: refEnv.func.get(funcName)[1],
           obj: typedObjCall,
           args: typedArgs,
           name: funcName
         }
       }
-    // const funcType = refEnv.func.get(funcName);
-    // typedArgsType.forEach((argType, i) => {
-    //   if (!isEqualType(funcType[0][i], argType)) {
-    //     throw new Error(`TYPE ERROR: Function ${funcName} expects argument ${i} to be ${funcType[0][i]}, but ${argType} given`);
-    //   }
-    // });
     default:
       // @ts-ignore
       throw new Error("TYPE ERROR: Unknown expression " + expr.tag);
