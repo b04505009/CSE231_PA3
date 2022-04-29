@@ -22,7 +22,7 @@ export function traverseType(c: TreeCursor, s: string): Type {
       c.parent();
       return { tag: "object", name: "None" };
     default:
-      throw new Error("ParseError: Unknown type " + c.type.name)
+      throw new Error("TYPE ERROR: Unknown type " + c.type.name)
   }
 }
 
@@ -55,7 +55,7 @@ export function traverseParams(c: TreeCursor, s: string): TypedVar<null>[] {
     } else if (c.type.name === ")") {
       break;
     } else {
-      throw new Error("ParseError: Missed type annotation for parameter " + name);
+      throw new Error("TYPE ERROR: Missed type annotation for parameter " + name);
     }
   }
   c.parent(); // pop paramlist
@@ -71,35 +71,40 @@ export function traverseBody(c: TreeCursor, s: string): Body<null> {
     classdefs: [],
     stmts: [],
   };
+  var stmtStarted = false;
+  var returned = false;
   do {
+    if (returned) {
+      const stmt = traverseStmt(c, s);
+      console.log(stmt)
+      throw new Error("TYPE ERROR: Should not have statement after return")
+    }
     const stmt = traverseStmt(c, s);
-    var stmtStarted = false;
     if (stmt.tag === "varInit") {
       if (stmtStarted) {
         // TODO: Show which body 
-        throw new Error("ParseError: Variable initializer after statement in body");
+        throw new Error("TYPE ERROR: Variable initializer after statement in body");
       }
       body.varinits.push(traverseVarInit(c, s));
     } else if (stmt.tag === "funcDef") {
       if (stmtStarted) {
         // TODO: Show which body 
-        throw new Error("ParseError: Function definition after statement in body");
+        throw new Error("TYPE ERROR: Function definition after statement in body");
       }
       body.funcdefs.push(traverseFuncDef(c, s));
     } else if (stmt.tag === "classDef") {
       if (stmtStarted) {
         // TODO: Show which body 
-        throw new Error("ParseError: Class definition after statement in body");
+        throw new Error("TYPE ERROR: Class definition after statement in body");
       }
       body.classdefs.push(traverseClassDef(c, s));
     }
     else {
       stmtStarted = true;
-      body.stmts.push(stmt);
-      // TODO: Show error if there are statements after return
       if (stmt.tag === "return") {
-        break;
+        returned = true;
       }
+      body.stmts.push(stmt);
     }
   } while (c.nextSibling())
   c.prevSibling();
@@ -140,7 +145,7 @@ export function traverseExpr(c: TreeCursor, s: string): Expr<null> {
       c.firstChild(); // go to operator
       var uniOp = s.substring(c.from, c.to);
       if (!isUniOp(uniOp)) {
-        throw new Error("ParseError: Unknown unary operator: " + uniOp);
+        throw new Error("TYPE ERROR: Unknown unary operator: " + uniOp);
       }
       c.nextSibling(); // go to operand
       var operand = traverseExpr(c, s);
@@ -156,7 +161,7 @@ export function traverseExpr(c: TreeCursor, s: string): Expr<null> {
       c.nextSibling();
       var binOp = s.substring(c.from, c.to); // Operator
       if (!isBinOp(binOp)) {
-        throw new Error("ParseError: Unknown binary operator: " + binOp);
+        throw new Error("TYPE ERROR: Unknown binary operator: " + binOp);
       }
       c.nextSibling();
       var rhs = traverseExpr(c, s);
@@ -174,7 +179,7 @@ export function traverseExpr(c: TreeCursor, s: string): Expr<null> {
       c.firstChild(); // Expr
       var func = traverseExpr(c, s);
       if (func.tag !== "id" && func.tag != "call") {
-        throw new Error("ParseError: Cannot make a function call with " + func.tag);
+        throw new Error("TYPE ERROR: Cannot make a function call with " + func.tag);
       }
       c.nextSibling(); // ArgList
       var args = traverseArgs(c, s);
@@ -194,7 +199,7 @@ export function traverseExpr(c: TreeCursor, s: string): Expr<null> {
       c.parent(); // MemberExpression
       return { tag: "id", obj, name }
     default:
-      throw new Error("ParseError: Could not parse expr " + c.type.name);
+      throw new Error("TYPE ERROR: Could not parse expr " + c.type.name);
   }
 }
 
@@ -207,13 +212,13 @@ export function traverseIf(c: TreeCursor, s: string): { tag: "if", cond: Expr<nu
   var then = traverseBody(c, s);
   c.parent(); // Body then
   if (then["varinits"].length > 0) {
-    throw new Error("ParseError: then body cannot have varinits");
+    throw new Error("TYPE ERROR: then body cannot have varinits");
   }
   if (then["funcdefs"].length > 0) {
-    throw new Error("ParseError: then body cannot have funcdefs");
+    throw new Error("TYPE ERROR: then body cannot have funcdefs");
   }
   if (then["classdefs"].length > 0) {
-    throw new Error("ParseError: then body cannot have classdefs")
+    throw new Error("TYPE ERROR: then body cannot have classdefs")
   }
   if (!c.nextSibling()) { // "elif" or "else" or end
     return { tag: "if", cond, then: then["stmts"], else: [] };
@@ -229,13 +234,13 @@ export function traverseIf(c: TreeCursor, s: string): { tag: "if", cond: Expr<nu
   var else_ = traverseBody(c, s);
   c.parent(); // Body else
   if (else_["varinits"].length > 0) {
-    throw new Error("ParseError: else body cannot have varinits");
+    throw new Error("TYPE ERROR: else body cannot have varinits");
   }
   if (else_["funcdefs"].length > 0) {
-    throw new Error("ParseError: else body cannot have funcdefs");
+    throw new Error("TYPE ERROR: else body cannot have funcdefs");
   }
   if (then["classdefs"].length > 0) {
-    throw new Error("ParseError: else body cannot have classdefs")
+    throw new Error("TYPE ERROR: else body cannot have classdefs")
   }
   return { tag: "if", cond, then: then["stmts"], else: else_["stmts"] };
 }
@@ -282,7 +287,7 @@ export function traverseStmt(c: TreeCursor, s: string): Stmt<null> {
         }
       }
       else {
-        throw new Error("ParseError: cannot assign to " + c.type.name)
+        throw new Error("TYPE ERROR: cannot assign to " + c.type.name)
       }
     case "IfStatement":
       // TODO: elif
@@ -301,13 +306,13 @@ export function traverseStmt(c: TreeCursor, s: string): Stmt<null> {
       c.parent(); // "Body"
       c.parent(); // WhileStatement
       if (loop["varinits"].length > 0) {
-        throw new Error("ParseError: while body cannot have varinits");
+        throw new Error("TYPE ERROR: while body cannot have varinits");
       }
       if (loop["funcdefs"].length > 0) {
-        throw new Error("ParseError: while body cannot have funcdefs");
+        throw new Error("TYPE ERROR: while body cannot have funcdefs");
       }
       if (loop["classdefs"].length > 0) {
-        throw new Error("ParseError: while body cannot have classdefs");
+        throw new Error("TYPE ERROR: while body cannot have classdefs");
       }
       return { tag: "while", cond, loop: loop["stmts"] }
     case "PassStatement":
@@ -332,7 +337,7 @@ export function traverseStmt(c: TreeCursor, s: string): Stmt<null> {
     case "ClassDefinition":
       return { tag: "classDef" }
     default:
-      throw new Error("ParseError: Could not parse stmt at " + c.node.from + " " + c.node.to + ": " + c.type.name);
+      throw new Error("TYPE ERROR: Could not parse stmt at " + c.node.from + " " + c.node.to + ": " + c.type.name);
   }
 }
 
@@ -351,14 +356,14 @@ export function traverseVarInit(c: TreeCursor, s: string): VarInit<null> {
   var name = s.substring(c.from, c.to);
   c.nextSibling(); // TypeDef
   if (!typeNameCheck(c, "TypeDef")) {
-    throw new Error("ParseError: Expected TypeDef, got " + c.type.name);
+    throw new Error("TYPE ERROR: Expected TypeDef, got " + c.type.name);
   }
   var type = traverseType(c, s);
   c.nextSibling(); // AssignOp
   c.nextSibling(); // Literal
   var init = traverseExpr(c, s);
   if (init.tag !== "literal") {
-    throw new Error("ParseError: Expected literal for variable initialization, got " + init.tag);
+    throw new Error("TYPE ERROR: Expected literal for variable initialization, got " + init.tag);
   }
   c.parent(); // AssignStatement
   return { name, type, init: init.value };
@@ -385,10 +390,10 @@ export function traverseFuncDef(c: TreeCursor, s: string): FuncDef<null> {
   c.parent(); // Body
   c.parent(); // FunctionDefinition
   if (body["funcdefs"].length > 0) {
-    throw new Error("ParseError: function body cannot have funcdefs");
+    throw new Error("TYPE ERROR: function body cannot have funcdefs");
   }
   if (body["classdefs"].length > 0) {
-    throw new Error("ParseError: function body cannot have classdefs")
+    throw new Error("TYPE ERROR: function body cannot have classdefs")
   }
   return { name, params, body, ret };
 }
@@ -403,10 +408,10 @@ export function traverseClassDef(c: TreeCursor, s: string): ClassDef<null> {
   c.nextSibling() // ArgList
   var args = traverseArgs(c, s)
   if (args.length !== 1) {
-    throw new Error("ParseError: class can and must have one super class")
+    throw new Error("TYPE ERROR: class can and must have one super class")
   }
   if (args[0].tag !== "id") {
-    throw new Error("ParseError: invalid super class for class " + name)
+    throw new Error("TYPE ERROR: invalid super class for class " + name)
   }
   c.nextSibling() // Body
   c.firstChild() // ":"
@@ -415,10 +420,10 @@ export function traverseClassDef(c: TreeCursor, s: string): ClassDef<null> {
   c.parent() // Body
   c.parent() // ClassDefinition
   if (body.classdefs.length !== 0) {
-    throw new Error("ParseError: class body cannot have classdefs");
+    throw new Error("TYPE ERROR: class body cannot have classdefs");
   }
   if (body.stmts.length !== 0) {
-    throw new Error("ParseError: class body cannot have stmts");
+    throw new Error("TYPE ERROR: class body cannot have stmts");
   }
   return { name, super: args[0].name, body }
 }
@@ -432,7 +437,7 @@ export function traverse(c: TreeCursor, s: string): Body<null> {
       console.log("traversed " + prog.varinits.length + " varinits, " + prog.funcdefs.length + " funcdefs, " + prog.classdefs.length + " classdefs, and " + prog.stmts.length + " statements");
       return prog;
     default:
-      throw new Error("ParseError: Could not parse program at " + c.node.from + " " + c.node.to);
+      throw new Error("TYPE ERROR: Could not parse program at " + c.node.from + " " + c.node.to);
   }
 }
 

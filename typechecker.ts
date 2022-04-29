@@ -13,7 +13,7 @@ type TypeEnv = {
 export function checkDuplicateID(name: string, mapList: (Map<string, any> | Set<string>)[]): void {
   for (const mapOrSet of mapList) {
     if (mapOrSet.has(name)) {
-      throw new Error("ReferenceError: Duplicate declaration of identifier in same scope: " + name);
+      throw new Error("TYPE ERROR: Duplicate declaration of identifier in same scope: " + name);
     }
   }
 }
@@ -72,6 +72,9 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
   // Check classdefs
   // Add classdefs to globalEnv
   prog.classdefs.forEach((classdef, i) => {
+
+    var hasInit = false;
+
     // classname cannot duplicate with var, func, class
     checkDuplicateID(classdef.name, [globalEnv.var, globalEnv.func, globalEnv.class]);
     // Add class to globalEnv.class
@@ -95,16 +98,26 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
       checkDuplicateID(funcdef.name, [globalEnv.class.get(classdef.name).var]);
       // Add func to globalEnv.class
       globalEnv.class.get(classdef.name).func.set(funcdef.name, [funcdef.params.map(p => p.type), funcdef.ret]);
+      if (funcdef.name === "__init__") {
+        hasInit = true;
+        if (funcdef.params.length != 1) {
+          throw new Error(`TYPE ERROR: `)
+        }
+      }
     });
 
     // If there's no explicit constructor, add an empty one
     // TODO: Correct order should be letting explicit constructor overwrite
-    if (!globalEnv.class.get(classdef.name).func.has("__init__")) {
+    if (!hasInit) {
       const initPyCode = `def __init__(self: ${classdef.name}):
   pass
 `;
       const initFuncAst = parse(initPyCode).funcdefs[0];
       prog.classdefs[i].body.funcdefs.push(initFuncAst);
+    }
+    // If there's an explicit constructor, check its args
+    else {
+      globalEnv.class.get(classdef.name).func.get("__init__").
     }
   })
 
@@ -196,13 +209,13 @@ export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalE
         // Normal variable assignment
         if (typedObj === null) {
           if (!refEnv.var.has(stmt.target.name)) {
-            throw new Error("ReferenceError: Undefined variable: " + stmt.target.name);
+            throw new Error("TYPE ERROR: Undefined variable: " + stmt.target.name);
           }
           if (!localEnv.var.has(stmt.target.name)) {
-            throw new Error("ReferenceError: Cannot assign to non-local variable " + stmt.target.name);
+            throw new Error("TYPE ERROR: Cannot assign to non-local variable " + stmt.target.name);
           }
           const typedValue = typeCheckExpr(stmt.value, refEnv);
-          if (!isAssignable(typedValue.a, refEnv.var.get(stmt.target.name))) {
+          if (!isAssignable(refEnv.var.get(stmt.target.name), typedValue.a)) {
             throw new Error(`TYPE ERROR: Cannot assign value of type ${typedValue.a.name} to variable ${stmt.target.name} of type ${refEnv.var.get(stmt.target.name).name}`);
           }
           typedStmts.push({
@@ -230,11 +243,11 @@ export function typeCheckStmts(stmts: Stmt<null>[], localEnv: TypeEnv, nonLocalE
         break;
       case "return":
         const typedRet = typeCheckExpr(stmt.ret, refEnv);
-        if (!isAssignable(typedRet.a, refEnv.ret)) {
+        if (!isAssignable(refEnv.ret, typedRet.a)) {
           throw new Error(`TYPE ERROR: Cannot return value of type ${typedRet.a.name} from function with return type ${refEnv.ret.name}`);
         }
         typedStmts.push({ ...stmt, a: asObjectType("None"), ret: typedRet });
-        return typedStmts;
+        break;
       case "if":
         const typedCond_if = typeCheckExpr(stmt.cond, refEnv);
         if (!isEqualPrimitiveType(typedCond_if.a, "bool")) {
@@ -272,7 +285,7 @@ export function typeCheckVarInits(inits: VarInit<null>[]): VarInit<Type>[] {
     if (typedInit.a.tag != init.type.tag) {
       throw new Error(`TYPE ERROR: Cannot initialize variable ${init.name} of type ${init.type.name} with value of type ${typedInit.a.name}`);
     }
-    if (!isAssignable(typedInit.a, init.type)) {
+    if (!isAssignable(init.type, typedInit.a)) {
       throw new Error("TYPE ERROR: Cannot initialize variable " + init.name + " of type " + init.type.name + " with value of type " + typedInit.a.name);
     }
     typedInits.push({ ...init, a: init.type, init: typedInit });
@@ -345,6 +358,7 @@ export function typeCheckMethodDef(def: FuncDef<null>, classEnv: TypeEnv, nonLoc
     func: new Map(),
     class: new Map(),
   };
+
   const typedParams = def.params.map(param => ({ ...param, a: param.type }))
   // Add parameters to local env
   typedParams.forEach(param => {
@@ -354,7 +368,7 @@ export function typeCheckMethodDef(def: FuncDef<null>, classEnv: TypeEnv, nonLoc
   const typedInits = typeCheckVarInits(def.body.varinits);
   typedInits.forEach(init => {
     if (localEnv.var.has(init.name)) {
-      throw new Error("ReferenceError: Duplicate declaration of identifier in same scope: " + init.name);
+      throw new Error("TYPE ERROR: Duplicate declaration of identifier in same scope: " + init.name);
     }
     localEnv.var.set(init.name, init.type);
   });
@@ -398,7 +412,7 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
       // Normal variable
       if (typedObj === null) {
         if (!refEnv.var.has(expr.name)) {
-          throw new Error(`ReferenceError: Undefined variable ${expr.name}`);
+          throw new Error(`TYPE ERROR: Undefined variable ${expr.name}`);
         }
         return {
           ...expr,
@@ -501,7 +515,9 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
         const typedArgs = expr.args.map(arg => typeCheckExpr(arg, refEnv));
         const typedArgsType = typedArgs.map(arg => arg.a);
         if (refEnv.class.has(expr.name)) {
-          // TODO: check the number of arguments for constructor
+          if (typedArgs.length != 0) {
+            throw new Error(`TYPE ERROR: Constructor ${expr.name}() cannot have argument`)
+          }
           return {
             a: { tag: "object", name: expr.name },
             tag: "constructor",
@@ -522,7 +538,7 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
         }
         const funcName = funcNameMangling(expr.name, "", typedArgsType);
         if (!refEnv.mangledFuncs.has(funcName)) {
-          throw new Error(`ReferenceError: Undefined function ${funcName}`);
+          throw new Error(`TYPE ERROR: Undefined function ${funcName}`);
         }
         return {
           ...expr,
@@ -551,7 +567,7 @@ export function typeCheckExpr(expr: Expr<null>, refEnv: TypeEnv): Expr<Type> {
 
         const funcName = funcNameMangling(expr.name, typedObjCall.a.name, typedArgsType)
         if (!refEnv.mangledFuncs.has(funcName)) {
-          throw new Error(`ReferenceError: Undefined function ${funcName}`);
+          throw new Error(`TYPE ERROR: Undefined function ${funcName}`);
         }
         return {
           ...expr,

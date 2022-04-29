@@ -130,7 +130,7 @@ x
     catch (e) {
       err = e.message;
     }
-    expect(err).to.equal("ReferenceError: Cannot assign to non-local variable x");
+    expect(err).to.equal("TYPE ERROR: Cannot assign to non-local variable x");
   });
 
   it('test 5', async () => {
@@ -279,7 +279,10 @@ f(x)
   });
 
   it('test 15', async () => {
-    const result = await run(`
+    var result;
+    var err;
+    try {
+      result = await run(`
 x:int = 5
 def f(x:int)->int:
     if x == 0:
@@ -288,10 +291,13 @@ def f(x:int)->int:
     else:
         return x+1
 f(0)
-      `, config);
-    expect(result).to.equal(0);
+    `, config);
+    }
+    catch (e) {
+      err = e.message;
+    }
+    expect(err).to.equal("TYPE ERROR: Should not have statement after return");
   });
-
 
   it('test 16', async () => {
     var result;
@@ -326,7 +332,7 @@ def f(x:int)->int:
       pass
     else:
       return x
-        `, config);
+`, config);
     }
     catch (e) {
       err = e.message;

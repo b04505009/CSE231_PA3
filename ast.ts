@@ -20,6 +20,18 @@ export type FuncDef<A> = {
 
 export function funcNameMangling(name: string, objName: string, args: Type[]): string {
   return objName + "$$" + name + "$$" + args.map(t => t.name.toString()).join("$");
+  // let mangledArgs = ""
+  // args.forEach(t => {
+  //   if (t.tag === "primitive") {
+  //     mangledArgs += t.name.toString()
+  //   }
+  //   else {
+  //     mangledArgs += "object"
+  //   }
+  //   mangledArgs += "$"
+  // }
+  // )
+  // return objName + "$$" + name + "$$" + mangledArgs
 }
 
 export type Stmt<A> =
@@ -105,15 +117,15 @@ export function isEqualType(type1: Type, type2: Type): boolean {
   return type1.tag === type2.tag && type1.name === type2.name;
 }
 
-export function isAssignable(type1: Type, type2: Type): boolean {
-  if (type1 === null || type2 === null) {
+export function isAssignable(lhs: Type, rhs: Type): boolean {
+  if (lhs === null || rhs === null) {
     return false;
   }
-  if (type1.tag === "primitive" && type2.tag === "primitive") {
-    return type1.name === type2.name;
+  if (lhs.tag === "primitive" && rhs.tag === "primitive") {
+    return lhs.name === rhs.name;
   }
-  if (type1.tag === "object" && type2.tag === "object") {
-    return type1.name === "None" || type2.name === "None" || type1.name === type2.name;
+  if (lhs.tag === "object" && rhs.tag === "object") {
+    return rhs.name === "None" || lhs.name === rhs.name;
   }
   return false;
 }
