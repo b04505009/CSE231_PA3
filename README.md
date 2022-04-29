@@ -35,3 +35,12 @@ type := int | bool | <name>
 number := 32-bit integer literals
 name := Python identifiers other than `print` or keywords
 ```
+
+## Run
+
+```
+npm i
+npm run build-web
+npm run build-cli-repl
+npm test
+```
