@@ -13,7 +13,7 @@ const classMemberTable = new Map<string, VarInit<Type>[]>();
 
 export function compile(prog: Body<Type>): CompileResult {
 
-  console.log("compile: ", prog);
+  // console.log("compile: ", prog);
 
   const emptyEnv: LocalEnv = new Map();
 

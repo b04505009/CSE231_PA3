@@ -32,7 +32,7 @@ export function typeCheckProgram(prog: Body<null>): Body<Type> {
     classdefs: [],
   }
 
-  console.log("typeCheckProgram:", prog)
+  // console.log("typeCheckProgram:", prog)
 
   // Add varinits to globalEnv
   prog.varinits.forEach(varinit => {
