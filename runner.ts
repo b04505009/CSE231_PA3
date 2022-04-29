@@ -55,17 +55,5 @@ export async function run(chocoPyCode: string, config: any): Promise<number> {
   const asBinary = myModule.toBinary({});
   const wasmModule = await WebAssembly.instantiate(asBinary.buffer, importObject);
 
-  // TODO: Remove this ugly hack to pass the test case method-of-none
-  var number;
-  try {
-    number = (wasmModule.instance.exports as any)._start();
-  } catch (e) {
-    if (e instanceof RangeError) {
-      throw new Error("RUNTIME ERROR: ");
-    } 
-    else {
-      throw e;
-    }
-  }
-  return number;
+  return (wasmModule.instance.exports as any)._start();
 }

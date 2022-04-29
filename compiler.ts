@@ -206,7 +206,20 @@ function codeGenExpr(expr: Expr<Type>, localEnv: LocalEnv): Array<string> {
       // Method call
       if (expr.obj !== null) {
         const obj = codeGenExpr(expr.obj, localEnv);
-        return [...obj, ...(args.slice(1, args.length)), `(call $${expr.name})`];
+        return [
+          ...obj, 
+          `local.tee $$scratch`,
+          `
+          (if
+            (then)
+            (else
+              (i32.const 0)
+              call $runtimeError
+            )
+          )`,
+          `(local.get $$scratch)`,
+          ...(args.slice(1, args.length)), 
+          `(call $${expr.name})`];
       }
       // Function call
       switch (expr.name) {
@@ -217,7 +230,8 @@ function codeGenExpr(expr: Expr<Type>, localEnv: LocalEnv): Array<string> {
         case "$$print$$None":
           return [
             ...args,
-            `(if 
+            `
+            (if 
               (then
                 (i32.const 1)
                 call $runtimeError
